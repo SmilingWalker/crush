@@ -1,15 +1,35 @@
-# Crush Development Guide
+# AGENTS.md
 
-## Project Overview
+This file provides guidance to agents when working with code in this repository.
 
-Crush is a terminal-based AI coding assistant built in Go by
-[Charm](https://charm.land). It connects to LLMs and gives them tools to read,
-write, and execute code. It supports multiple providers (Anthropic, OpenAI,
-Gemini, Bedrock, Copilot, Hyper, MiniMax, Vercel, and more), integrates with
-LSPs for code intelligence, and supports extensibility via MCP servers and
-agent skills.
+## Build & Test Commands
 
-The module path is `github.com/charmbracelet/crush`.
+```bash
+# Build (CGO disabled, green tea GC experimental)
+task build
+# or: go build -v .
+
+# Run tests with race detector (required by default)
+task test
+# or: go test -race -failfast ./...
+
+# Run single test package
+go test -race -failfast ./internal/agent
+
+# Run specific test
+go test -race -failfast ./internal/agent -run TestCoderAgent/simple_test
+
+# Lint (includes custom log capitalization check)
+task lint
+# or: golangci-lint run --path-mode=abs --config=".golangci.yml" --timeout=5m
+
+# Format
+task fmt
+# or: gofumpt -w .
+
+# Record VCR test cassettes (re-runs all agent tests)
+task test:record
+```
 
 ## Architecture
 
@@ -50,19 +70,20 @@ internal/
   history/                         Prompt history
 ```
 
-### Key Dependency Roles
+## Critical Non-Obvious Patterns
 
-- **`charm.land/fantasy`**: LLM provider abstraction layer. Handles protocol
-  differences between Anthropic, OpenAI, Gemini, etc. Used in `internal/app`
-  and `internal/agent`.
-- **`charm.land/bubbletea/v2`**: TUI framework powering the interactive UI.
-- **`charm.land/lipgloss/v2`**: Terminal styling.
-- **`charm.land/glamour/v2`**: Markdown rendering in the terminal.
-- **`charm.land/catwalk`**: Snapshot/golden-file testing for TUI components.
-- **`sqlc`**: Generates Go code from SQL queries in `internal/db/sql/`.
+### Testing
+- **VCR Cassettes**: Tests use VCR to record/replay HTTP responses. Test fixtures are in `internal/agent/testdata/TestCoderAgent/{provider}/{test_name}.yaml`
+- **Race detection**: Tests MUST use `-race` flag (enforced by Taskfile)
+- **Test recording**: `task test:record` deletes and regenerates all VCR cassettes - use when adding new test cases
+
+### Agent Behavior
+- **Message queuing**: Agent automatically queues prompts when busy; queued messages process after current request completes
+- **Auto-summarization**: Sessions auto-summarize when approaching context window limits (20K buffer for large windows, 20% for small)
+- **Loop detection**: Built-in detection stops repeated tool calls (configurable window size and max repeats)
+- **MCP initialization**: MUST call `mcp.WaitForInit()` before using MCP tools in non-interactive mode
 
 ### Key Patterns
-
 - **Config is a Service**: accessed via `config.Service`, not global state.
 - **Tools are self-documenting**: each tool has a `.go` implementation and a
   `.md` description file in `internal/agent/tools/`.
@@ -84,100 +105,33 @@ internal/
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
-## Build/Test/Lint Commands
+### Provider Workarounds
+- **Media in tool results**: OpenAI, Google, OpenRouter don't support images in tool results. Agent converts media to user messages with attachments for these providers. Anthropic/Bedrock support native media.
+- **Cache control**: Anthropic ephemeral caching applied to last 2 messages and last tool by default (disable with `CRUSH_DISABLE_ANTHROPIC_CACHE=1`)
 
-- **Build**: `go build .` or `go run .`
-- **Test**: `task test` or `go test ./...` (run single test:
-  `go test ./internal/llm/prompt -run TestGetContextFromPaths`)
-- **Update Golden Files**: `go test ./... -update` (regenerates `.golden`
-  files when test output changes)
-  - Update specific package:
-    `go test ./internal/tui/components/core -update` (in this case,
-    we're updating "core")
-- **Lint**: `task lint:fix`
-- **Format**: `task fmt` (`gofumpt -w .`)
-- **Modernize**: `task modernize` (runs `modernize` which makes code
-  simplifications)
-- **Dev**: `task dev` (runs with profiling enabled)
+### Code Style Requirements
+- **Log capitalization**: ALL log messages MUST start with capital letter (enforced by `scripts/check_log_capitalization.sh`)
+  - ✅ `slog.Info("Starting agent")`
+  - ❌ `slog.Info("starting agent")`
+- **Formatting**: Uses `gofumpt` (stricter than gofmt) and `goimports` (enforced by golangci-lint)
 
-## Code Style Guidelines
+### Configuration
+- **Priority order**: `.crush.json` > `crush.json` > `~/.config/crush/crush.json`
+- **Data vs config**: Ephemeral data (sessions, logs) in `.crush/` directory, config in separate location
+- **Environment overrides**: `CRUSH_GLOBAL_DATA` and `CRUSH_GLOBAL_CONFIG` override default paths
 
-- **Imports**: Use `goimports` formatting, group stdlib, external, internal
-  packages.
-- **Formatting**: Use gofumpt (stricter than gofmt), enabled in
-  golangci-lint.
-- **Naming**: Standard Go conventions — PascalCase for exported, camelCase
-  for unexported.
-- **Types**: Prefer explicit types, use type aliases for clarity (e.g.,
-  `type AgentName string`).
-- **Error handling**: Return errors explicitly, use `fmt.Errorf` for
-  wrapping.
-- **Context**: Always pass `context.Context` as first parameter for
-  operations.
-- **Interfaces**: Define interfaces in consuming packages, keep them small
-  and focused.
-- **Structs**: Use struct embedding for composition, group related fields.
-- **Constants**: Use typed constants with iota for enums, group in const
-  blocks.
-- **Testing**: Use testify's `require` package, parallel tests with
-  `t.Parallel()`, `t.SetEnv()` to set environment variables. Always use
-  `t.Tempdir()` when in need of a temporary directory. This directory does
-  not need to be removed.
-- **JSON tags**: Use snake_case for JSON field names.
-- **File permissions**: Use octal notation (0o755, 0o644) for file
-  permissions.
-- **Log messages**: Log messages must start with a capital letter (e.g.,
-  "Failed to save session" not "failed to save session").
-  - This is enforced by `task lint:log` which runs as part of `task lint`.
-- **Comments**: End comments in periods unless comments are at the end of the
-  line.
+### Build Environment
+- **CGO disabled**: All builds use `CGO_ENABLED=0` (enforced in Taskfile)
+- **Experimental GC**: Uses `GOEXPERIMENT=greenteagc` for green tea garbage collector
+- **Version injection**: Build version injected via ldflags: `-X github.com/charmbracelet/crush/internal/version.Version={{.VERSION}}`
 
-## Testing with Mock Providers
+### Architecture Notes
+- **LSP integration**: Uses LSP for code context and diagnostics, not just file reading
+- **Pub/sub events**: Services communicate via pub/sub (internal/pubsub) with 2-second send timeout
+- **Concurrent-safe values**: Uses `csync` package for thread-safe value sharing
+- **Session management**: Parent-child session relationships; cannot continue child sessions directly
 
-When writing tests that involve provider configurations, use the mock
-providers to avoid API calls:
-
-```go
-func TestYourFunction(t *testing.T) {
-    // Enable mock providers for testing
-    originalUseMock := config.UseMockProviders
-    config.UseMockProviders = true
-    defer func() {
-        config.UseMockProviders = originalUseMock
-        config.ResetProviders()
-    }()
-
-    // Reset providers to ensure fresh mock data
-    config.ResetProviders()
-
-    // Your test code here - providers will now return mock data
-    providers := config.Providers()
-    // ... test logic
-}
-```
-
-## Formatting
-
-- ALWAYS format any Go code you write.
-  - First, try `gofumpt -w .`.
-  - If `gofumpt` is not available, use `goimports`.
-  - If `goimports` is not available, use `gofmt`.
-  - You can also use `task fmt` to run `gofumpt -w .` on the entire project,
-    as long as `gofumpt` is on the `PATH`.
-
-## Comments
-
-- Comments that live on their own lines should start with capital letters and
-  end with periods. Wrap comments at 78 columns.
-
-## Committing
-
-- ALWAYS use semantic commits (`fix:`, `feat:`, `chore:`, `refactor:`,
-  `docs:`, `sec:`, etc).
-- Try to keep commits to one line, not including your attribution. Only use
-  multi-line commits when additional context is truly necessary.
-
-## Working on the TUI (UI)
-
-Anytime you need to work on the TUI, read `internal/ui/AGENTS.md` before
-starting work.
+### Tool Implementation
+- **Tool context**: Tools receive `SessionID` and `MessageID` via context for logging and permissions
+- **Permission system**: All tool calls go through permission service (can auto-approve for non-interactive)
+- **File tracking**: File changes tracked via `filetracker.Service` for history
