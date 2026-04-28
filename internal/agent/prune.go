@@ -18,13 +18,13 @@ var prunableTools = map[string]bool{
 	"bash":          true,
 	"grep":          true,
 	"glob":          true,
-	"view":          true,
-	"ls":            true,
-	"sourcegraph":   true,
-	"fetch":         true,
+	"view":         true,
+	"ls":           true,
+	"sourcegraph":  true,
+	"fetch":        true,
 	"agentic_fetch": true,
-	"crush_info":    true,
-	"crush_logs":    true,
+	"crush_info":   true,
+	"crush_logs":   true,
 }
 
 var clearableToolUses = map[string]bool{
@@ -33,37 +33,72 @@ var clearableToolUses = map[string]bool{
 	"write":     true,
 }
 
-// prune modifies msgs in-place to free context space by replacing old tool
-// outputs with a short marker and clearing large edit parameters. It does not
-// write to the database — original data is preserved. Returns the estimated
-// number of tokens freed.
+// ── 共享类型 ──
+
+type toolCallLoc struct {
+	msgIndex  int
+	partIndex int
+}
+
+type candidate struct {
+	msgIndex   int
+	partIndex  int
+	toolName   string
+	tokens     int
+	isPrunable bool
+}
+
+type pruneTarget struct {
+	msgIndex   int
+	partIndex  int
+	isPrunable bool
+}
+
+// ── 主入口 ──
+
+// prune 修改 msgs 以释放上下文空间：将旧的可修剪工具输出替换为短标记，
+// 将旧的编辑类工具的调用参数清除。不写数据库，原始数据永久保留。
 func prune(msgs []message.Message) int {
-	// Build ToolCallID → (msgIndex, partIndex) lookup for clearableToolUses backtracking.
-	type callLocation struct {
-		msgIndex  int
-		partIndex int
+	callLoc := buildToolCallIndex(msgs)
+	candidates := collectCandidates(msgs, callLoc)
+
+	if len(candidates) == 0 {
+		return 0
 	}
-	toolCallLoc := make(map[string]callLocation)
+
+	targets, freed := selectTargets(candidates)
+	if len(targets) == 0 {
+		return 0
+	}
+
+	executePruning(msgs, targets, callLoc, freed)
+	return freed
+}
+
+// ── 子函数 ──
+
+// buildToolCallIndex 构建 ToolCallID → (msgIndex, partIndex) 查找表。
+func buildToolCallIndex(msgs []message.Message) map[string]toolCallLoc {
+	loc := make(map[string]toolCallLoc)
 	for i, msg := range msgs {
 		if msg.Role != message.Assistant {
 			continue
 		}
 		for j, part := range msg.Parts {
 			if tc, ok := part.(message.ToolCall); ok {
-				toolCallLoc[tc.ID] = callLocation{msgIndex: i, partIndex: j}
+				loc[tc.ID] = toolCallLoc{msgIndex: i, partIndex: j}
 			}
 		}
 	}
+	return loc
+}
 
-	type candidate struct {
-		msgIndex  int
-		partIndex int
-		toolName  string
-		tokens    int
-	}
-
-	// Phase 1: Collect all candidates via reverse-scan.
-	var candidates []candidate // ordered newest-to-oldest
+// collectCandidates 反向扫描消息，收集可裁剪的候选者。
+// 跳过最近 pruneProtectTurns 个 turn，遇到 summary 停止。
+// prunable 估算 ToolResult.Content，clearable 估算 ToolCall.Input。
+// 返回按从新到旧排序的候选者列表。
+func collectCandidates(msgs []message.Message, callLoc map[string]toolCallLoc) []candidate {
+	var candidates []candidate
 	turns := 0
 
 	for msgIndex := len(msgs) - 1; msgIndex >= 0; msgIndex-- {
@@ -78,164 +113,144 @@ func prune(msgs []message.Message) int {
 		if msg.Role == message.Assistant && msg.IsSummaryMessage {
 			break
 		}
-
 		if msg.Role != message.Tool {
 			continue
 		}
+
 		for partIndex := len(msg.Parts) - 1; partIndex >= 0; partIndex-- {
 			tr, ok := msgs[msgIndex].Parts[partIndex].(message.ToolResult)
 			if !ok {
 				continue
 			}
-
 			toolName := tr.Name
 
-			// Skip protected tools (LSP, agent, MCP, etc.)
 			if isProtectedTool(toolName) {
 				continue
 			}
-			if !isPrunableTool(toolName) && !isClearableToolUse(toolName) {
-				continue
-			}
 
-			candidates = append(candidates, candidate{
-				msgIndex:  msgIndex,
-				partIndex: partIndex,
-				toolName:  toolName,
-				tokens:    estimateTokens(tr.Content),
-			})
-		}
-	}
-
-	if len(candidates) == 0 {
-		return 0
-	}
-
-	// Phase 2: Determine prune targets.
-	type pruneTarget struct {
-		msgIndex  int
-		partIndex int
-		toolName  string
-	}
-
-	// 2a: Prunable tools — apply token protection zone.
-	// Accumulate from newest; anything beyond pruneProtectTokens is a target.
-	runningTotal := 0
-	var prunableTargets []pruneTarget
-	prunableFreed := 0
-	for _, c := range candidates {
-		if !isPrunableTool(c.toolName) {
-			continue
-		}
-		runningTotal += c.tokens
-		if runningTotal > pruneProtectTokens {
-			prunableTargets = append(prunableTargets, pruneTarget{
-				msgIndex:  c.msgIndex,
-				partIndex: c.partIndex,
-				toolName:  c.toolName,
-			})
-			prunableFreed += c.tokens
-		}
-	}
-
-	// 2b: If nothing exceeded the zone, check if total prunable tokens meet
-	// the minimum and prune from oldest.
-	if prunableFreed == 0 {
-		totalPrunable := 0
-		for _, c := range candidates {
-			if isPrunableTool(c.toolName) {
-				totalPrunable += c.tokens
-			}
-		}
-		if totalPrunable >= pruneMinimum {
-			for i := len(candidates) - 1; i >= 0; i-- {
-				if isPrunableTool(candidates[i].toolName) {
-					prunableTargets = append(prunableTargets, pruneTarget{
-						msgIndex:  candidates[i].msgIndex,
-						partIndex: candidates[i].partIndex,
-						toolName:  candidates[i].toolName,
+			if isPrunableTool(toolName) {
+				candidates = append(candidates, candidate{
+					msgIndex:   msgIndex,
+					partIndex:  partIndex,
+					toolName:   toolName,
+					tokens:     estimateTokens(tr.Content),
+					isPrunable: true,
+				})
+			} else if isClearableToolUse(toolName) {
+				inputTokens := lookupInputTokens(msgs, callLoc, tr.ToolCallID)
+				if inputTokens > 0 {
+					candidates = append(candidates, candidate{
+						msgIndex:   msgIndex,
+						partIndex:  partIndex,
+						toolName:   toolName,
+						tokens:     inputTokens,
+						isPrunable: false,
 					})
-					prunableFreed += candidates[i].tokens
-					if prunableFreed >= pruneMinimum {
-						break
-					}
 				}
 			}
 		}
 	}
 
-	// 2c: Clearable tools — always clear input for candidates (cheap operation).
-	var clearableTargets []pruneTarget
-	clearableFreed := 0
-	for _, c := range candidates {
-		if !isClearableToolUse(c.toolName) {
-			continue
-		}
-		clearableTargets = append(clearableTargets, pruneTarget{
-			msgIndex:  c.msgIndex,
-			partIndex: c.partIndex,
-			toolName:  c.toolName,
-		})
-		// Estimate freed tokens from ToolCall.Input.
-		tr := msgs[c.msgIndex].Parts[c.partIndex].(message.ToolResult)
-		if loc, ok := toolCallLoc[tr.ToolCallID]; ok {
-			tc := msgs[loc.msgIndex].Parts[loc.partIndex].(message.ToolCall)
-			clearableFreed += estimateTokens(tc.Input)
-		}
-	}
-
-	totalFreed := prunableFreed + clearableFreed
-	if totalFreed < pruneMinimum {
-		return 0
-	}
-
-	// Phase 3: Execute pruning in-place.
-	// Prunable: replace content with marker.
-	for _, tgt := range prunableTargets {
-		tr := msgs[tgt.msgIndex].Parts[tgt.partIndex].(message.ToolResult)
-		tr.Content = pruneMarker
-		tr.Data = ""
-		msgs[tgt.msgIndex].Parts[tgt.partIndex] = tr
-	}
-
-	// Clearable: clear ToolCall.Input to "{}".
-	for _, tgt := range clearableTargets {
-		tr := msgs[tgt.msgIndex].Parts[tgt.partIndex].(message.ToolResult)
-		// Keep ToolResult as-is (content preserved).
-		msgs[tgt.msgIndex].Parts[tgt.partIndex] = tr
-		if loc, ok := toolCallLoc[tr.ToolCallID]; ok {
-			tc := msgs[loc.msgIndex].Parts[loc.partIndex].(message.ToolCall)
-			tc.Input = "{}"
-			msgs[loc.msgIndex].Parts[loc.partIndex] = tc
-		}
-	}
-
-	slog.Debug("prune: executed",
-		"candidates", len(candidates),
-		"pruned_outputs", len(prunableTargets),
-		"cleared_inputs", len(clearableTargets),
-		"freed_tokens", totalFreed,
-	)
-
-	return totalFreed
+	slog.Debug("prune: 收集候选者", "candidates", len(candidates))
+	return candidates
 }
 
-// estimateTokens returns a rough token count for text (4 chars ≈ 1 token).
+// selectTargets 判断是否触发裁剪，并从最旧的候选者中选定目标。
+// 40K 是保护阈值，超出部分 >= 5K 才触发。
+func selectTargets(candidates []candidate) ([]pruneTarget, int) {
+	totalSavable := 0
+	for _, c := range candidates {
+		totalSavable += c.tokens
+	}
+
+	if totalSavable <= pruneProtectTokens {
+		slog.Debug("prune: 未超过保护阈值", "total", totalSavable)
+		return nil, 0
+	}
+
+	excess := totalSavable - pruneProtectTokens
+	if excess < pruneMinimum {
+		slog.Debug("prune: 超出不足 5K，跳过", "excess", excess)
+		return nil, 0
+	}
+
+	// 从最旧的候选者开始裁剪
+	var targets []pruneTarget
+	freed := 0
+	remaining := excess
+
+	for i := len(candidates) - 1; i >= 0 && remaining > 0; i-- {
+		c := candidates[i]
+		targets = append(targets, pruneTarget{
+			msgIndex:   c.msgIndex,
+			partIndex:  c.partIndex,
+			isPrunable: c.isPrunable,
+		})
+		freed += c.tokens
+		remaining -= c.tokens
+	}
+
+	slog.Debug("prune: 选定目标", "targets", len(targets), "freed", freed)
+	return targets, freed
+}
+
+// executePruning 就地执行裁剪：prunable 替换 Content，clearable 清除 Input。
+func executePruning(msgs []message.Message, targets []pruneTarget, callLoc map[string]toolCallLoc, totalFreed int) {
+	prunedOutputs := 0
+	clearedInputs := 0
+
+	for _, tgt := range targets {
+		if tgt.isPrunable {
+			tr := msgs[tgt.msgIndex].Parts[tgt.partIndex].(message.ToolResult)
+			tr.Content = pruneMarker
+			tr.Data = ""
+			msgs[tgt.msgIndex].Parts[tgt.partIndex] = tr
+			prunedOutputs++
+		} else {
+			tr := msgs[tgt.msgIndex].Parts[tgt.partIndex].(message.ToolResult)
+			if loc, ok := callLoc[tr.ToolCallID]; ok {
+				tc := msgs[loc.msgIndex].Parts[loc.partIndex].(message.ToolCall)
+				tc.Input = "{}"
+				msgs[loc.msgIndex].Parts[loc.partIndex] = tc
+				clearedInputs++
+			}
+		}
+	}
+
+	slog.Debug("prune: 执行完成",
+		"pruned_outputs", prunedOutputs,
+		"cleared_inputs", clearedInputs,
+		"total_freed", totalFreed,
+	)
+}
+
+// ── 工具函数 ──
+
+// lookupInputTokens 查找 ToolCall 并估算其 Input 的 token 数。
+func lookupInputTokens(msgs []message.Message, callLoc map[string]toolCallLoc, toolCallID string) int {
+	loc, ok := callLoc[toolCallID]
+	if !ok {
+		return 0
+	}
+	tc, ok := msgs[loc.msgIndex].Parts[loc.partIndex].(message.ToolCall)
+	if !ok {
+		return 0
+	}
+	return estimateTokens(tc.Input)
+}
+
 func estimateTokens(text string) int {
 	return len(text) / 4
 }
 
-// isPrunableTool returns true if the tool is eligible for output pruning.
 func isPrunableTool(name string) bool {
 	return prunableTools[name]
 }
 
-// isClearableToolUse returns true if the tool's call input can be cleared.
 func isClearableToolUse(name string) bool {
 	return clearableToolUses[name]
 }
 
-// isProtectedTool returns true if the tool is an LSP tool (protected by prefix).
 func isProtectedTool(name string) bool {
 	return strings.HasPrefix(name, "lsp_")
 }
