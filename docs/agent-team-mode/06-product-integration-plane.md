@@ -137,6 +137,27 @@ tool_call_id
 - tool execution count by actor。
 - conflict count。
 
+### 6.1 成本监控（M2）
+
+M2 起在 TUI 中展示实时成本：
+
+- 每个 teammate 的当前 session token/cost。
+- team 总 token/cost。
+- 预算使用百分比（如果配置了 `max_cost`/`max_tokens`）。
+- 接近预算阈值时 UI 警告（80%、90%、100%）。
+- 超预算时 teammate 自动停止，leader 收到通知。
+
+展示位置：
+
+- Team panel 的 member 行右侧显示 token/cost。
+- 底部状态栏显示 team 总 cost。
+
+数据来源：
+
+- `FinishRunTx` 更新 `team_members.tokens_used`/`cost_used`。
+- `team_runs.prompt_tokens`/`completion_tokens`/`cost` 累加。
+- UI 定期从 team snapshot 刷新（复用 SSE event）。
+
 ## 7. E2E 验收
 
 M1：
