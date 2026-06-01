@@ -1,80 +1,48 @@
-# Agent Team Mode 文档集
+# AgentTeam Mode 技术设计方案
 
-> 这是 `crush` Agent Team Mode 的拆分版技术设计。
-> 背景调研见：`../agent-team-mode-architecture.md`。
-> 风险登记表见：`12-risk-register.md`。
+本目录整合两套输入：
 
-## 阅读顺序
+1. `../deprecated/notion-agent-team`：偏完整目标架构，强调 `internal/team`、长期
+   `TeamRunner/MateRunner`、DB mailbox/task/audit/outbox、permission bridge、
+   compact TUI、A2A gateway。
+2. `../deprecated/agent-team-mode`：偏渐进落地，强调四线推进、read-only delegates、
+   ActorContext 前置、安全隔离、成本预算、patch artifact、风险登记。
 
-1. `00-current-constraints.md`
-   先读当前代码约束：`currentAgent` singleton、`SessionAgent` queue、permission、SSE、session schema。
+最终路线不是二选一：
 
-2. `01-roadmap.md`
-   看整体技术路线和 M0-M5 迭代节奏。
+- 保留 Notion 的 Phase 0 runtime spike，用来尽早验证长期 teammate runtime。
+- 保留当前 repo 的四线推进法，用来组织工程落地。
+- 把 Notion 的 `TeamRunner/MateRunner/team_* tools/TeamService` 补进当前方案。
+- 把当前 repo 的安全前置、敏感文件 deny-list、MCP 过滤、成本预算、patch-first
+  写入策略作为默认门禁。
 
-3. `02-m1-team-preview.md`
-   第一阶段具体实现：read-only parallel delegates，含 ActorContext skeleton、敏感文件过滤、MCP 过滤、E2E 测试。
+## 最终路线
 
-4. `03-runtime-control-plane.md`
-   A 线：`DelegateRunner`、`AgentRegistry`、`RunAgent`、per-agent ready gate、cancel registry、heartbeat、并发度控制。
+```text
+M0    方案冻结与边界对齐
+M0.5  隐藏 Runtime Spike
+M1    Safe Team Preview / Read-only Delegates
+M2    Durable Team Domain + TeamService
+M3    In-process TeamRunner + Mailbox + Scheduler
+M4    Permission Bridge + Audit + Shared Task Board
+M5    Safe Patch Artifact Write + File Coordination
+M6    Advanced Runtime: Worktree / Process Backend / A2A Gateway
+```
 
-5. `04-collaboration-data-plane.md`
-   B 线：team DB schema、sqlc、事务、API、SSE replay、成本预算、消息消费算法。
+## 文档地图
 
-6. `05-safety-isolation-plane.md`
-   C 线：ActorContext、workspace-scoped read-only、敏感文件 deny-list、permission scope（三级）、ToolExecutionEvent、MCP/skills 过滤、patch 安全写、bash 安全。
-
-7. `06-product-integration-plane.md`
-   D 线：feature flag、TUI 面板、observability、成本监控、E2E 验收。
-
-8. `07-m2-durable-team-skeleton.md`
-   第二阶段具体实现：durable team/member/task/run/event。
-
-9. `08-m3-mailbox-scheduler-recovery.md`
-   第三阶段具体实现：M3a（scheduler + heartbeat + recovery）、M3b（mailbox + dependencies）。
-
-10. `09-m4-patch-artifact-write.md`
-    第四阶段具体实现：teammate 产 patch artifact，leader review/apply。
-
-11. `10-m5-advanced-worktree-a2a.md`
-    后续高级阶段：direct write、file lease、worktree、A2A gateway。
-
-12. `11-testing-rollout.md`
-    测试矩阵、回滚策略、最小启动任务清单、性能回归监控。
-
-13. `12-risk-register.md`
-    风险登记表：按严重度和里程碑分组，附缓解措施。
-
-## 四条工程线
-
-| 工程线 | 文档 | 核心职责 |
-| --- | --- | --- |
-| A Runtime Control Plane | `03-runtime-control-plane.md` | 多 agent 创建、运行、取消、恢复、heartbeat |
-| B Collaboration Data Plane | `04-collaboration-data-plane.md` | task/message/run/artifact/event 持久化、成本预算、消息消费 |
-| C Safety & Isolation Plane | `05-safety-isolation-plane.md` | 权限、审计、读写隔离、敏感文件过滤、bash 安全 |
-| D Product Integration Plane | `06-product-integration-plane.md` | UI、feature flag、observability、成本监控、验收 |
-
-## 迭代节奏
-
-| 里程碑 | 目标 | 关键产物 |
-| --- | --- | --- |
-| M0 | 设计冻结 | 文档集、feature flag 草案、issue 拆分 |
-| M1 | Team Preview | read-only parallel delegates + ActorContext skeleton + 安全基础 |
-| M2 | Durable Team Skeleton | `AgentRegistry` + team DB/API/SSE + 成本预算 |
-| M3a | Scheduler + Recovery | claim/lease + heartbeat + startup recovery + Tool 四钩子 |
-| M3b | Mailbox + Dependencies | mailbox + ask leader + scoped grant + audit |
-| M4 | Safe Patch Write | patch artifact + review/apply + bash 安全 |
-| M5 | Advanced Runtime | direct write + worktree + A2A gateway |
-
-## 当前默认策略
-
-- 旧 `/agent` API 永远代表默认 coder，不改成多 agent 路由。
-- P0/M1 不做长期 teammate，只做 read-only delegates。
-- P0/M1 不允许写文件、bash、job tools、MCP write。
-- Team 状态以 SQLite 为事实源，SSE 只做通知。
-- teammate session 不进入普通 session list。
-- teammate 间 peer chat 不进入 M1。
-- 写作业第一阶段是 patch artifact，不直接写主工作区。
-- 安全基础（ActorContext、敏感文件过滤、MCP 过滤）前置于功能开发。
-- 成本控制（token/cost budget）随 team 规模同步引入。
-- Permission scope 初期只实现 call/task/session 三级。
+| 文档 | 作用 |
+| --- | --- |
+| `00-source-map-and-diff.md` | 对比 Notion 与当前 repo 方案的差异。 |
+| `01-merged-architecture-principles.md` | 合并后的架构原则和不变量。 |
+| `02-runtime-spike-m0-m05.md` | M0/M0.5 runtime spike 设计。 |
+| `03-four-plane-roadmap.md` | 四线推进矩阵。 |
+| `04-team-domain-data-contract.md` | DB、Service、Event、API contract。 |
+| `05-runtime-control-plane.md` | TeamRunner、MateRunner、AgentRegistry。 |
+| `06-collaboration-protocol.md` | mailbox、task、team tools。 |
+| `07-safety-permission-audit.md` | ActorContext、权限、审计、MCP/tool policy。 |
+| `08-product-ui-observability.md` | TUI、debug snapshot、event replay、成本展示。 |
+| `09-milestone-plan-m0-m6.md` | M0-M6 详细交付路线。 |
+| `10-testing-risk-gates.md` | 测试矩阵、风险门禁。 |
+| `11-agent-review-synthesis.md` | 三个审查 agent 的综合结论。 |
+| `12-open-architecture-issues.md` | 进入实现前必须钉死的架构问题。 |

@@ -52,7 +52,7 @@
 
 关注问题：
 
-- 当前 `docs/agent-team-mode` 相比 Notion 是否缺硬协议层。
+- 旧版 `docs/deprecated/agent-team-mode` 相比 Notion 是否缺硬协议层。
 - runtime/data/permission/API/TUI/test 是否形成闭环。
 
 发现缺口：
@@ -68,7 +68,7 @@
 结论：
 
 - 当前四线框架很好，不要推翻。
-- 但 `merge-agent-team` 必须补成契约文档，而不只是对比摘要。
+- 但正式 `docs/agent-team-mode` 必须补成契约文档，而不只是对比摘要。
 
 ## Agent C：合并方案
 
@@ -89,7 +89,7 @@ M0 -> M0.5 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6
 
 ## 总结
 
-`notion-agent-team` 做原始方案归档，`merge-agent-team` 做最终实施口径。
+`docs/deprecated/notion-agent-team` 做原始方案归档，`docs/agent-team-mode` 做最终实施口径。
 
 最重要的调整是：
 
@@ -97,4 +97,3 @@ M0 -> M0.5 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6
 2. 继续保留当前 repo 的四线推进、安全前置和 patch-first 写入策略。
 3. 把 Notion 的硬协议补为可执行契约：TeamRunner、TeamService、team tools、
    mailbox envelope、PermissionBridge、workspace/client/TUI round-trip。
-

@@ -12,7 +12,7 @@ Notion 方案更像完整目标蓝图，重点是：
 - compact TUI。
 - A2A 作为未来 gateway。
 
-对应材料见 `../notion-agent-team`。
+对应材料见 `../deprecated/notion-agent-team`。
 
 ## 输入二：当前 Repo 方案
 
@@ -27,7 +27,7 @@ Notion 方案更像完整目标蓝图，重点是：
 - patch artifact 先于 direct write。
 - 风险登记表。
 
-对应材料见 `../agent-team-mode`。
+对应材料见 `../deprecated/agent-team-mode`。
 
 ## 核心差异
 
@@ -73,4 +73,3 @@ Notion 方案应作为目标架构和硬协议来源，当前 repo 方案应作�
 - 早期允许 teammate direct write。
 - 第一阶段用 A2A 作为内部协议。
 - 第一版做复杂 dashboard。
-

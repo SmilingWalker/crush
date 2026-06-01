@@ -20,8 +20,8 @@ Source parent page: `多智能体架构设计（AgentTeam）`
 ## Relationship To `docs/agent-team-mode`
 
 The Notion plan is the broader original migration blueprint. The existing
-`docs/agent-team-mode` directory is a safer staged implementation proposal
+`docs/deprecated/agent-team-mode` directory is a safer staged implementation proposal
 that adds earlier read-only, ActorContext, sensitive-file, MCP, budget, and
 risk controls.
 
-The merged recommendation lives in `../merge-agent-team`.
+The official merged recommendation lives in `../../agent-team-mode`.

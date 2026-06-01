@@ -4,7 +4,7 @@
 > 仓库：`crush`  
 > 分支：`codex/agent-team-research`  
 > 目标：基于 Crush 当前架构，参考 Claude Code Agent Teams，设计一个可分阶段落地的多智能体 team mode。
-> 拆分版设计：见 `docs/agent-team-mode/README.md`。
+> 拆分版历史设计：见 `docs/deprecated/agent-team-mode/README.md`。正式方案见 `docs/agent-team-mode/README.md`。
 
 本文不是功能脑图，而是工程设计报告。核心问题包括：
 
