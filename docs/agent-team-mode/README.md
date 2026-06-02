@@ -52,6 +52,8 @@ M6    Worktree / Process Backend / A2A Gateway
 | `10-testing-risk-gates.md` | 测试矩阵、风险门禁、E2E 验收 | QA/研发 |
 | `11-implementation-plan.md` | 实施拆分、PR 顺序、跨模块依赖 | tech lead |
 | `12-open-architecture-issues.md` | 开工前和阶段前必须冻结的问题 | tech lead |
+| `13-architecture-review-brief.md` | 面向产品/管理评审的架构总览、生命周期和路线图 | 产品/管理/架构 |
+| `14-ui-review-brief.md` | 面向产品/管理评审的 UI 信息架构、流程和状态设计 | 产品/管理/UI |
 
 ## 推进口径
 
