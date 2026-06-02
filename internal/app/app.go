@@ -31,6 +31,7 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/shell"
@@ -56,6 +57,7 @@ type App struct {
 	Messages    message.Service
 	History     history.Service
 	Permissions permission.Service
+	Questions   questions.Service
 	FileTracker filetracker.Service
 
 	AgentCoordinator agent.Coordinator

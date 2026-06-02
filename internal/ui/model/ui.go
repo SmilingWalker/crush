@@ -39,6 +39,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
 	"github.com/charmbracelet/crush/internal/stringext"
@@ -736,6 +737,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case pubsub.Event[questions.QuestionsRequest]:
+		d := dialog.NewQuestionsDialog(m.com, msg.Payload)
+		m.dialog.OpenDialog(d)
+		cmds = append(cmds, m.sendNotification(notification.Notification{
+			Title:   "Crush is waiting...",
+			Message: "There is a question for you.",
+		}))
 	case pubsub.Event[permission.PermissionNotification]:
 		m.handlePermissionNotification(msg.Payload)
 	case cancelTimerExpiredMsg:
@@ -1574,6 +1582,10 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		case dialog.PermissionDeny:
 			m.com.Workspace.PermissionDeny(msg.Permission)
 		}
+
+	case dialog.ActionQuestionsResponse:
+		m.com.Workspace.QuestionsAnswer(msg.Response)
+		m.dialog.CloseDialog(dialog.QuestionsID)
 
 	case dialog.ActionFilePickerSelected:
 		cmds = append(cmds, tea.Sequence(
