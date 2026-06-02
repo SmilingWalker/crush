@@ -32,6 +32,7 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
@@ -91,6 +92,7 @@ type coordinator struct {
 	sessions    session.Service
 	messages    message.Service
 	permissions permission.Service
+	questions   questions.Service
 	history     history.Service
 	filetracker filetracker.Service
 	lspManager  *lsp.Manager
@@ -113,6 +115,7 @@ func NewCoordinator(
 	sessions session.Service,
 	messages message.Service,
 	permissions permission.Service,
+	questions questions.Service,
 	history history.Service,
 	filetracker filetracker.Service,
 	lspManager *lsp.Manager,
@@ -137,6 +140,7 @@ func NewCoordinator(
 		sessions:     sessions,
 		messages:     messages,
 		permissions:  permissions,
+		questions:    questions,
 		history:      history,
 		filetracker:  filetracker,
 		lspManager:   lspManager,
@@ -516,6 +520,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		tools.NewJobKillTool(),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
+		tools.NewAskUserQuestionsTool(c.questions),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewGlobTool(c.cfg.WorkingDir()),
