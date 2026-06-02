@@ -11,6 +11,7 @@ UI 目标不是一开始做复杂 dashboard，而是让用户能看懂 team 在�
 - 所有需要用户决策的地方必须显示 actor：team、teammate、task、run、tool、resource。
 - M1 不展示长期 teammate 概念，避免让用户误以为 delegate 可以互相通信或持续工作。
 - M3 后才展示 roster、mailbox/activity、task board。
+- M3.5 可以展示 change proposal，但必须明确它不能 apply、不能写文件。
 - M5 写作业必须通过 patch review UI，不允许在聊天流里静默改文件。
 
 ## UI 信息架构
@@ -22,13 +23,46 @@ Chat timeline
     expanded member rows
     task board summary
     mailbox/activity summary
+    change proposal summary
     action bar
 
 Dialogs
   permission dialog
+  child transcript modal
+  change proposal review modal
   debug snapshot modal
   patch review/apply modal
 ```
+
+## Team mode 入口与发现
+
+第一版不做“静默自动建 team”。用户必须能看见并确认 team mode 入口，避免 leader 在用户没有心理预期时
+启动多个 agent。
+
+入口分三层：
+
+| 阶段 | 入口 | 行为 |
+| --- | --- | --- |
+| M1 | command dialog / action bar: `Start read-only delegates` | 只创建一次性 delegates，不创建 durable team |
+| M2 | debug command: `Create team snapshot` | 创建 team/member/task domain，用于验证 DB/API/SSE |
+| M3+ | leader proposal item + command dialog: `Start teammate team` | 用户确认后 leader 才调用 `team_create` / `team_spawn_member` |
+
+leader proposal item：
+
+```text
+Start teammate team?
+reason: this task has parallel research + implementation tracks
+teammates: researcher, tester
+actions: start team / run as single agent / inspect plan
+```
+
+规则：
+
+- flag off 时不显示入口、不注入 leader team guidance。
+- M1 delegate 入口文案必须写清楚 `read-only` 和 `one-shot`。
+- M3 team 入口必须显示将创建的 teammate 数量、角色和第一批 task summary。
+- 用户选择 `run as single agent` 后，本轮不再重复弹出同一 proposal。
+- 入口 item 是普通 timeline item；刷新后可从 snapshot 恢复为 started/canceled/declined。
 
 ## TUI implementation mapping
 
@@ -51,6 +85,7 @@ TeamItemModel
   cost TeamCostSummary
   loading_state idle | loading_snapshot | reconnecting | stale
   error_state none | seq_gap | snapshot_failed | runtime_unavailable
+  viewport TeamViewportState
 ```
 
 Reducer 输入：
@@ -89,6 +124,16 @@ p          open patch review for focused artifact
 d          open debug snapshot
 esc        close modal / collapse focus
 ```
+
+展开项高度与滚动：
+
+- collapsed team item 固定 1-2 行，不因 member/task 数量改变 timeline 高度。
+- expanded team item 默认最大高度为可用终端高度的 45%，且不超过 18 行；低于 24 行终端时最大高度为 10 行。
+- expanded item 内部有独立 viewport；当焦点在 item 内时 `up/down/pageup/pagedown` 滚动内部，
+  焦点离开后恢复 chat timeline 滚动。
+- action bar 固定在 expanded item 底部，不随内部 member/task/activity 列表滚走。
+- 如果内容被截断，底部显示 `+N more rows`，不能让下一条 chat message 被遮住。
+- permission 和 patch modal 打开时，timeline 不响应 member/task/action 焦点键。
 
 焦点优先级：
 
@@ -145,6 +190,24 @@ user asks leader to create team
 - 最近一次 tool/action 是什么。
 - 是否需要用户授权或改派任务。
 
+### M3.5：变更提案预览
+
+```text
+user asks teammate to propose an implementation
+  -> teammate reads code and task context
+  -> teammate creates change_proposal artifact
+  -> timeline shows proposal ready
+  -> leader/user reviews, asks revise, discards, or marks accepted for patch
+```
+
+用户看见的结果：
+
+- teammate 建议修改哪些文件。
+- 每个文件为什么要改。
+- 轻量 hunk / pseudo diff。
+- 风险和建议验证命令。
+- 明确提示：proposal 不能 apply，不能写 workspace。
+
 ### M5：安全写作业
 
 ```text
@@ -192,6 +255,37 @@ copy trace id
 
 M1 不显示 mailbox，不显示 peer chat，不显示长期 teammate roster。
 
+### Delegate lifecycle states
+
+M1 必须展示 delegate group 的过渡态，而不是只展示静态 done/running：
+
+```text
+initializing   group row created, child sessions pending
+running        at least one delegate running, no result yet
+partial        at least one delegate done, at least one still running
+aggregating    all delegates stopped/done, leader is summarizing results
+ready          aggregated result available, not inserted
+inserted       aggregated result inserted into chat context
+canceled       user canceled group
+failed         group failed before useful result
+```
+
+状态渲染：
+
+```text
+Delegates  partial  1 done / 2 running  $0.04  00:38
+researcher-a  running   00:21  grep parser
+reviewer-b    done      00:34  result ready
+tester-c      running   00:18  reading tests
+```
+
+规则：
+
+- `partial` 时用户可以 open 已完成 child transcript，也可以 cancel still-running delegates。
+- `aggregating` 时 action bar 只保留 `open child transcript`、`copy trace id`，不允许重复 insert。
+- `ready` 后 `insert aggregated result` 只执行一次；执行后状态变 `inserted`。
+- `failed` 必须保留 child session id、error kind、denied resource summary。
+
 M1 组件数据：
 
 ```text
@@ -207,6 +301,19 @@ cost
 last_activity
 error_kind
 ```
+
+### Open child transcript
+
+`open child transcript` 使用只读 modal，而不是切换当前 chat session。
+
+行为：
+
+- 打开时显示 child session title、delegate name、state、cost、started/finished time。
+- child 正在运行时，modal 可以跟随最新 transcript snapshot；关闭 modal 不 cancel child。
+- transcript 内容只读，不显示输入框，不允许在 child modal 中继续对话。
+- `esc` 返回原 team item；焦点回到打开前的 delegate row。
+- modal 顶部显示 `read-only child transcript`，避免用户以为进入了新主 session。
+- 如果 child transcript 无法加载，显示 trace id 和 `open session from session list` fallback。
 
 ## M2：Team Debug / Snapshot UI
 
@@ -282,9 +389,54 @@ tester      2
 writer      1
 ```
 
+## M3.5：Change Proposal UI
+
+M3.5 是实现型价值预览，不是 patch apply。UI 必须把 `change_proposal` 和 `patch artifact`
+分开呈现。
+
+Timeline row：
+
+```text
+Proposal proposal_01  writer  task_14  3 files  review only
+```
+
+Review modal：
+
+```text
+Change proposal proposal_01
+member: writer
+task: task_14
+status: pending_review
+
+files:
+docs/foo.md        update API section     risk: low
+internal/bar.go    adjust parser branch   risk: medium
+
+pseudo diff:
+@@ docs/foo.md
+- current behavior summary
++ proposed behavior summary
+
+suggested verification:
+go test ./internal/parser/...
+
+actions: request revision / discard / accept for patch / copy proposal
+```
+
+规则：
+
+- proposal hunk 是轻量结构化的 review hint，不是精确 diff。UI 可以展示 file、intent、anchor、
+  approximate line、before/after summary 和 pseudo diff；缺少 anchor 或 line 不阻止展示。
+- `accept for patch` 不写文件，只把 proposal 状态改为 `accepted_for_patch`。
+- `request revision` 通过 mailbox/task 给 teammate 发送 structured feedback。
+- `discard` 写 artifact 状态和 audit，不删除历史。
+- modal 标题和 action bar 必须显示 `review only`。
+- proposal 的 pseudo diff 不能传给 M5 apply service；M5 必须重新生成正式 patch artifact。
+- 如果 target file 在 proposal 后发生变化，UI 显示 `context may be stale`，但不做 base hash apply 判断。
+
 ## M4：Permission 与 Task Board UI
 
-Permission dialog 必须显示：
+M4 复用并扩展现有 permission dialog，不做第二套完全独立弹窗。Permission dialog 必须显示：
 
 ```text
 member: writer
@@ -321,8 +473,32 @@ Permission dialog 行为：
 - 默认焦点在 `deny` 或最小授权，不默认扩大到 task scope。
 - `allow once` 只对当前 tool call 生效。
 - `allow for task` 只对同一 task、同一 member、同类 resource 生效。
+- `allow for task` 只写 team-scoped grant；不能变成现有 session-wide persistent allow。
+- `allow for session` 不在默认 action bar 展示；如作为 advanced action，需要二级确认。
 - late response 要显示“请求已结束”，不能默默应用到新 run。
 - deny 后 member 状态必须转为 blocked 或收到 structured denial。
+
+### Permission queue / timeout
+
+权限请求可能并发出现，UI 必须有队列规则：
+
+- 同一时间只展示一个 permission modal。
+- 排序优先级：当前聚焦 team 的 pending request > oldest `created_at` > higher risk resource。
+- modal footer 显示队列摘要：`2 more permission requests pending`。
+- 当前 request resolved/expired/canceled 后，自动打开下一个 pending request；如果用户按 `esc`，
+  只关闭当前 modal，不自动 deny。
+- request 过期时，modal actions 变 disabled，状态显示 `expired`，用户只能 `view audit` 或 `close`。
+- 达到 `max_permission_pending_per_team=3` 时，team item 顶部显示 warning，并阻止新 request 创建；
+  member 收到 structured denial/blocked reason。
+- late response 到达时，如果 modal 仍开着，显示 `request already ended`，关闭后不创建 grant。
+
+队列行格式：
+
+```text
+pending permissions
+writer   write docs/foo.md      expires in 01:12
+tester   bash go test ./...     blocked by policy
+```
 
 ## M5：Patch Review UI
 
@@ -343,6 +519,46 @@ diff viewer
 verification logs
 actions: apply / reject / save conflict / copy patch
 ```
+
+### Diff viewer 交互
+
+M5 第一版使用 unified diff，不做 side-by-side。原因是 TUI 横向空间有限，unified diff 更容易在
+80-120 列终端保持可读。
+
+布局：
+
+```text
+Patch patch_01  writer  task_14  base ok  3 files  +42 -8
+[1/3] docs/foo.md        modify   +20 -3
+[2/3] internal/bar.go    modify   +18 -5
+[3/3] assets/logo.png    binary   review-only
+
+@@ hunk 1/4
+- old line
++ new line
+```
+
+键位：
+
+```text
+j/k        next/previous line
+n/p        next/previous file
+] / [      next/previous hunk
+f          focus file list
+v          focus verification log
+a          apply, requires confirm
+r          reject, requires reason optional
+c          copy patch/ref
+esc        close review
+```
+
+大 diff 策略：
+
+- 超过 12 files 或 2,000 changed lines 时默认进入 summary mode，只展开 file list 和 hunk headers。
+- 用户可以逐文件 expand；一次最多渲染一个文件的完整 hunks。
+- 单行超过 viewport width 时默认 soft wrap；可切换 horizontal scroll，但第一版不要求 side-by-side。
+- 二进制文件只展示 metadata、hash、size、change kind；不能 apply binary change，除非后续阶段显式开放。
+- verification log 长输出默认折叠，只显示 command、exit status、前后各 20 行；可打开完整 log modal。
 
 Apply rules:
 

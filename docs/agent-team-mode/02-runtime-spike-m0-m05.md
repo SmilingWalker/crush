@@ -18,9 +18,9 @@ M0 和 M0.5 的目标不是发布功能，而是证明长期 member runtime 能�
 | 交付物 | 内容 |
 | --- | --- |
 | 文档冻结 | 本目录文档成为正式实现口径 |
-| feature flag 草案 | `experimental.agent_team_preview`, `experimental.agent_team` |
+| feature flag 草案 | `Options.Experimental.AgentTeamPreview`, `Options.Experimental.AgentTeam` |
 | package 草案 | `internal/team` 包结构和接口草图 |
-| ActorContext 草案 | workspace/team/member/task/run/session/tool identity |
+| ActorContext 草案 | `internal/actor.ActorContext`，包含 workspace/team/member/task/run/session/tool identity |
 | risk gate | M0.5 不通过，不进入 M3 runtime 产品化 |
 
 ### 退出条件
@@ -29,6 +29,8 @@ M0 和 M0.5 的目标不是发布功能，而是证明长期 member runtime 能�
 - M1 演示内容清楚。
 - M2/M3 需要的 DB/API/runtime 边界清楚。
 - 开发 issue 可以按 M1/M2/M3 拆分。
+- feature flag 结构已落到 `internal/config.Options.Experimental`，默认 nil/false，且 team API flag-off 返回
+  `feature_disabled`。
 
 ## M0.5：隐藏 Runtime Spike
 
@@ -72,7 +74,7 @@ type SpikeRuntime interface {
 ```text
 StartMember
   -> create/load child session
-  -> build TurnRunner from existing agent factory
+  -> build independent TurnRunner/SessionAgent from AgentFactory
   -> start goroutine
   -> mark idle
 
@@ -83,11 +85,39 @@ Send
 MemberRunner loop
   -> wait prompt/cancel/stop
   -> mark running
-  -> build minimal SessionAgentCall
-  -> call TurnRunner.Run(SessionAgentCall)
-  -> flush messages
+  -> build minimal TeamAgentCall
+  -> call TurnRunner.Run(TeamAgentCall)
+  -> flush messages through injected message flusher
   -> mark idle/failed/stopped
 ```
+
+M0.5 必须验证 `AgentFactory` 创建的是新的 `SessionAgent` 实例，而不是复用
+`Coordinator.currentAgent`。验证重点：
+
+- member runner 的 `tools`、`models`、`messageQueue`、`activeRequests` 与 coder runner 隔离。
+- coder 运行中 `SetTools` / `SetModels` 不会改变 member runner 的受限工具和模型策略。
+- member cancel 调用自己的 runner，不通过 `Coordinator.Cancel(sessionID)`。
+- stop/shutdown 的 flush 通过 message service 注入完成，不要求 `SessionAgent` 暴露 `FlushAll`。
+
+M0.5 spike 不允许直接构造旧 `internal/agent.SessionAgentCall` 给 team runtime 使用。必须先通过
+`TeamAgentCallAdapter` 显式映射：
+
+```text
+TeamAgentCall
+  -> TeamAgentCallAdapter
+  -> existing internal/agent.SessionAgentCall
+  -> SessionAgent.Run
+  -> TurnRunResult
+```
+
+当 `SessionAgent.Run` 因 session busy 返回 `(nil, nil)` 时，adapter 必须返回 `TurnQueued`
+或等价 sentinel。测试成功标准是：queued turn 不会触发 task completed、不会写 completed run。
+
+M0.5 不依赖 `SessionAgent` 内部 `messageQueue` 来追踪后续真正开始执行的时间；当前代码没有
+queued-start callback，调用者无法可靠知道入队 turn 何时被递归执行。实现上优先由
+`MemberRunner` 做 single-flight gate：同一 member 正在运行时，新 wakeup 留在 mailbox/local
+queue，下一轮由 `MemberRunner` 自己启动。如果 spike 发现必须复用 `SessionAgent.messageQueue`，
+则 M0.5 不通过，先补 queued-start lifecycle callback 后再进入 M3。
 
 ### 不做
 
@@ -102,14 +132,16 @@ MemberRunner loop
 
 | 验收项 | 说明 |
 | --- | --- |
-| 独立 session | mate 使用独立 session，不复用 leader session |
+| 独立 session | mate 使用独立 child session，不复用 leader session |
+| 独立 runner | mate 使用独立 `SessionAgent` 实例，不复用 `Coordinator.currentAgent` |
+| 策略隔离 | coder `SetTools`/`SetModels` 不影响 mate runner |
 | leader 不阻塞 | mate run 不阻塞 leader run |
-| busy 不吞 prompt | mate busy 时 prompt 要么排队，要么明确拒绝 |
+| busy 不吞 prompt | mate busy 时 prompt 留在 member queue/mailbox，或明确返回 queued/busy sentinel |
 | cancel 可恢复 | cancel current turn 后 mate 可继续接新 prompt |
-| stop 可 flush | stop 时 cancel/wait/FlushAll |
+| stop 可 flush | stop 时 cancel/wait，并通过 message service flush |
 | shutdown 不泄漏 | app shutdown 后无 mate goroutine 泄漏 |
 | busy 不污染 | `AgentIsBusy` 不因为 mate running 变成 true |
-| queued case 正确 | `Run` queued case 不被误标完成 |
+| queued case 正确 | `Run` queued case 返回 `TurnQueued`/sentinel，不写 completed run；无 callback 时不复用内部 queue |
 
 ## M0.5 到 M1/M2 的分界
 

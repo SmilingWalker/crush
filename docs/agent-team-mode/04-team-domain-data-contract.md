@@ -29,10 +29,11 @@ team_tasks
 team_runs
 team_events
 team_audit_events
-team_session_links
-team_idempotency_keys
 team_event_counters
 ```
+
+M2 core 的目标是验证 durable snapshot/event/API 事实源，不提前创建 M3 才消费的 mailbox、
+artifact、session visibility 和 idempotency hardening 表。
 
 ### `teams`
 
@@ -63,7 +64,7 @@ role
 agent_profile
 model_provider
 model_name
-status               created | starting | idle | queued | running | waiting_permission | blocked | stopped | failed
+status               created | starting | idle | queued | running | waiting_permission | blocked | canceling_turn | shutting_down | stopped | failed
 current_task_id
 current_run_id
 current_tool_name
@@ -125,50 +126,6 @@ cost_micros
 usage_status         final | partial | unknown
 error
 ```
-
-### `team_session_links`
-
-`team_session_links` 是 session 可见性、leader/member 关系和恢复的事实源。它不替代
-`session.parent_id`，而是补上 team 语义。
-
-```text
-id
-workspace_id
-team_id
-session_id
-member_id             nullable; leader session 为空
-link_type             leader | member | delegate
-visibility            normal | hidden_from_session_list
-created_at
-ended_at
-```
-
-规则：
-
-- leader session 使用 `link_type=leader`，`visibility=normal`。
-- long-lived member session 使用 `link_type=member`，默认 `hidden_from_session_list`。
-- M1 delegate child session 使用 `link_type=delegate`，是否展示由 M1 UI 决定。
-- `(team_id, session_id)` unique。
-- active link 的定义是 `ended_at is null`；同一 `session_id` 同时只能有一个 active link。
-
-### `team_idempotency_keys`
-
-```text
-id
-workspace_id
-team_id
-actor_member_id       nullable for leader/session-only calls
-operation             create_team | spawn_member | create_task | append_mailbox | append_artifact
-idempotency_key
-request_hash
-response_ref_type
-response_ref_id
-created_at
-expires_at
-```
-
-`(workspace_id, operation, actor_member_id, idempotency_key)` unique。相同 key、相同 request
-hash 返回原结果；相同 key、不同 request hash 返回 `idempotency_conflict`。
 
 ### `team_event_counters`
 
@@ -236,11 +193,39 @@ created_at
 ## M3 第二批表
 
 ```text
+team_session_links
 team_mailbox_messages
 team_message_receipts
 team_task_dependencies
 team_artifacts
 ```
+
+### `team_session_links`
+
+`team_session_links` 是 session 可见性、leader/member 关系和恢复的事实源。它不替代
+`session.parent_id`，而是补上 team 语义。M2 可以先通过 `teams.leader_session_id` 和
+`team_members.session_id` 表达基础关系；M3 在真正启动长期 teammate、处理 session visibility
+和 recovery 时再创建本表。
+
+```text
+id
+workspace_id
+team_id
+session_id
+member_id             nullable; leader session 为空
+link_type             leader | member | delegate
+visibility            normal | hidden_from_session_list
+created_at
+ended_at
+```
+
+规则：
+
+- leader session 使用 `link_type=leader`，`visibility=normal`。
+- long-lived member session 使用 `link_type=member`，默认 `hidden_from_session_list`。
+- M1 delegate child session 使用内存 trace，不写本表；M3 如需展示历史 delegate link 再 backfill。
+- `(team_id, session_id)` unique。
+- active link 的定义是 `ended_at is null`；同一 `session_id` 同时只能有一个 active link。
 
 ### `team_mailbox_messages`
 
@@ -303,7 +288,7 @@ team_id
 member_id
 task_id
 run_id
-kind                 message_attachment | task_result | patch | verification_log | conflict
+kind                 message_attachment | task_result | change_proposal | patch | verification_log | conflict
 title
 summary
 content_ref
@@ -312,44 +297,85 @@ metadata_json
 created_at
 ```
 
-M3 只启用 `message_attachment` 和 `task_result`。M5 才启用 `patch`、`verification_log`、
-`conflict`。
+M3 只启用 `message_attachment` 和 `task_result`。M3.5 启用 `change_proposal`。M5 才启用
+`patch`、`verification_log`、`conflict`。
+
+`change_proposal` 是只读 teammate 的实现提案，不是可 apply patch。metadata 必须包含：
+
+```text
+target_files          path, reason, risk
+proposed_hunks        file, intent, anchor, line_hint, before_summary, after_summary, pseudo_diff
+verification_suggestions
+proposal_status       pending_review | revise_requested | discarded | accepted_for_patch
+generated_by_run_id
+```
+
+`proposed_hunks` 只做轻量结构化，目的是支撑 review、request revision 和 M5 重新生成 patch 的输入，
+不是为了在 M3.5 解析或应用 diff。建议字段：
+
+```text
+file                  workspace-relative path
+intent                add | modify | delete | rename | unknown
+anchor                optional symbol/function/heading/search hint
+line_hint             optional approximate line or range, non-authoritative
+before_summary        optional current behavior/content summary
+after_summary         proposed behavior/content summary
+pseudo_diff           optional human-readable pseudo diff, not unified diff contract
+confidence            optional low | medium | high
+```
+
+规则：
+
+- `change_proposal` 不允许写 workspace，不允许 apply。
+- `pseudo_diff` 只作为 review 内容，不能进入 patch apply service。
+- `accepted_for_patch` 只表示 leader 认为提案值得继续；真正 patch 仍要等 M5 patch artifact。
+- 硬校验只覆盖 JSON shape、artifact size、`proposal_status` enum、`intent` enum、workspace-relative
+  path 和 path traversal；不校验 line 是否存在、anchor 是否命中或 `pseudo_diff` 是否符合 unified diff。
+- `line_hint`、`anchor`、`pseudo_diff` 都是 hint；UI 可以展示 stale/missing context，但不能因此把
+  proposal 升级成可 apply patch。
 
 Patch artifact metadata 见 `12-open-architecture-issues.md` 的 M5 冻结决策。DB 只存
 `content_ref` / `content_hash` / `metadata_json`，不直接存完整 patch text。
 
-## M5 写作业边界
+### Content store 契约
 
-```text
-team_apply_conflicts
+`content_ref` 不是文件路径，也不是 member 可构造的任意 URI。它必须由 workspace-scoped
+content store 生成并校验：
+
+```go
+type ContentRef struct {
+    WorkspaceID string
+    ArtifactID  string
+    Ref         string // opaque, store-generated
+    Hash        string // sha256:<hex>
+}
+
+type ContentStore interface {
+    Put(ctx context.Context, workspaceID, artifactID, kind string, data []byte) (ContentRef, error)
+    Get(ctx context.Context, workspaceID string, ref ContentRef) ([]byte, error)
+    Verify(ctx context.Context, workspaceID string, ref ContentRef) error
+    Delete(ctx context.Context, workspaceID string, ref ContentRef) error
+}
 ```
 
-M5 仍以 patch artifact 为主。允许在 leader review/apply 时做 base/hash 冲突检测，
-但不引入 teammate direct write、worktree runtime 或正式 file lease。
+规则：
 
-`team_apply_conflicts` 用于记录 apply 阶段失败原因：
+- `Ref` 必须是不透明 ID；member/tool input 不能传入绝对路径、相对路径或 `file://`。
+- `Get` 和 apply 前必须重新计算 hash 并匹配 `content_hash`，不匹配返回 `artifact_integrity_failed`。
+- store 读写必须校验 `workspace_id` 与 artifact row 一致，不能跨 workspace/team 读取。
+- M5 第一版使用 app data 下的 filesystem blob store；store root 放在受控 app data 目录，
+  不能落在普通 editable workspace path 里。
+- filesystem path 是 ContentStore implementation detail，不能出现在 API、DB `content_ref`、UI 或
+  member-visible payload 中。
+- archive/delete team 时执行 retention cleanup；清理失败写 audit/debug，不静默忽略。
 
-```text
-id
-team_id
-artifact_id
-task_id
-member_id
-base_hash
-current_hash
-conflict_summary
-created_at
-```
+演进路线：
 
-M6 才考虑：
-
-```text
-team_file_locks
-team_file_leases
-team_worktrees
-```
-
-其中 lock/lease 只在 direct write 或 worktree/process backend 需要时启用。
+- M5.1 增加 orphan blob sweep：扫描 content store 与 `team_artifacts` 引用差异，清理无主 blob。
+- M5.2 增加 quota/retention policy：按 workspace/team 限制 blob 总量、单 artifact size 和保留周期。
+- M6+ 可替换为 DB blob、CAS/object store 或 remote backend；`ContentStore` API 和 opaque ref/hash
+  contract 不变。
+- 后续如引入加密，放在 ContentStore implementation 内；上层仍只看 opaque ref 和 hash。
 
 ## M4 权限事实表
 
@@ -364,6 +390,50 @@ team_permission_grants
 `pending_permissions` snapshot 的事实源。`team_audit_events` 只记录审计，不承担 live
 permission state。
 
+## M5 写作业边界
+
+```text
+team_apply_conflicts
+```
+
+M5 仍以 patch artifact 为主。允许在 leader review/apply 时做 base/hash 冲突检测、写入前
+recheck 和进程内 per-path serialize guard，但不引入 teammate direct write、worktree runtime
+或跨进程正式 file lease。
+
+`team_apply_conflicts` 用于记录 apply 阶段失败原因：
+
+```text
+id
+team_id
+artifact_id
+task_id
+member_id
+base_hash
+current_hash
+conflict_type          base_mismatch | pre_write_mismatch | apply_failed | rollback_failed | partial_apply
+conflict_summary
+created_at
+```
+
+M6 才考虑：
+
+```text
+team_file_locks
+team_file_leases
+team_worktrees
+```
+
+其中 lock/lease 只在 direct write 或 worktree/process backend 需要时启用。
+
+M5 apply safety 第一版要求：
+
+- apply 前验证所有 touched files 的 base hash；任一 mismatch 整体 no-write。
+- 写入前对每个 touched file 做 pre-write recheck；recheck mismatch 生成 conflict，整体 no-write。
+- 同一进程内同一路径 apply 使用 per-path mutex 或等价 serialize guard。
+- 单文件写入使用 temp file + fsync/close + atomic rename。
+- 多文件 apply 不宣称 filesystem-level atomic；必须保留 before-image backup，后续文件失败时尝试
+  rollback。rollback 失败写 `partial_apply` / `rollback_failed` conflict，并让 UI 显示人工处理。
+
 ## DDL / SQLC implementation contract
 
 M2 migration 要给工程实现足够稳定的表契约，不能只落字段名。
@@ -375,7 +445,8 @@ M2 migration 要给工程实现足够稳定的表契约，不能只落字段名�
 - 所有表必须有 `created_at`，可变实体必须有 `updated_at` 和 `version`。
 - 所有 monetary cost 使用 integer micros 或 decimal string，不能使用 float。
 - JSON 字段统一命名为 `*_json`，存储 compact JSON，不存 raw prompt/file content。
-- 所有可由 tool 重试创建的写操作必须带 `idempotency_key` 或明确不可重试。
+- M2.5/PR-6 起，所有通过 server/client API 可重试创建的写操作必须带 `idempotency_key`
+  或明确不可重试；M2 local/debug service 可先不建 idempotency 表。
 - 新 team 表使用 `*_micros` integer 记录 cost；现有 session 层如果仍有 `REAL cost`，
   只在展示或兼容读取时转换，不把 float 写入 team domain。
 
@@ -392,12 +463,17 @@ team_runs(team_id, task_id)
 team_events(team_id, seq) unique
 team_events(workspace_id, team_id, created_at)
 team_audit_events(team_id, created_at)
+team_event_counters(team_id) primary key
+```
+
+M3/M2.5 后续索引：
+
+```text
 team_session_links(session_id, team_id)
 team_session_links(session_id) where ended_at is null
-team_idempotency_keys(workspace_id, operation, actor_member_id, idempotency_key) unique
-team_event_counters(team_id) primary key
 team_task_dependencies(team_id, task_id)
 team_task_dependencies(team_id, depends_on_task_id)
+team_idempotency_keys(workspace_id, operation, actor_member_id, idempotency_key) unique
 ```
 
 Event seq：
@@ -429,7 +505,28 @@ ClaimNextTask(team_id, member_id)
 
 不允许 service 层先 select 再 update。
 
-Idempotency：
+## M2.5 / PR-6 API hardening table
+
+`team_idempotency_keys` 在 server/client API 开始承诺可重试写操作时创建，不属于 M2 core migration。
+
+```text
+id
+workspace_id
+team_id
+actor_member_id       nullable for leader/session-only calls
+operation             create_team | spawn_member | create_task | append_mailbox | append_artifact
+idempotency_key
+request_hash
+response_ref_type
+response_ref_id
+created_at
+expires_at
+```
+
+`(workspace_id, operation, actor_member_id, idempotency_key)` unique。相同 key、相同 request
+hash 返回原结果；相同 key、不同 request hash 返回 `idempotency_conflict`。
+
+Idempotency request fields：
 
 ```text
 CreateTeamRequest.idempotency_key
@@ -439,14 +536,32 @@ AppendMailboxRequest.idempotency_key
 AppendArtifactRequest.idempotency_key
 ```
 
-同一 actor、同一 key、同一 operation 必须返回同一结果；payload 不一致时返回
-`idempotency_conflict`。
+M2 local/debug path 可以把这些字段标记为 optional/no-op；PR-6 server/client write API
+hardening 后必须执行 idempotency contract。
 
 ## API / event contract
 
 HTTP 和 local workspace 使用同一 proto 结构，server/client mode 不能少功能。
 本节 wrapper 只用于 team endpoints，不迁移现有非 team API。旧 `proto.Error{message}` 和
 现有 client 行为保持兼容；team client 需要单独实现 structured error decoding。
+
+### Team endpoint auth / authorization
+
+Team endpoints 继承现有 server/client workspace 访问模型，但必须在 team route 层再做
+workspace 与 actor 校验。没有 workspace 访问权的 client 不能读取或修改任何 team state。
+
+规则：
+
+- 所有 `/v1/workspaces/{id}/teams/*` endpoint 必须验证 caller 对 `{id}` workspace 有访问权。
+- `team_id` 必须属于 path 中的 `workspace_id`；不匹配返回 `not_found`，不泄露真实 team。
+- leader-only endpoint：create team、spawn/stop member、archive team、apply/reject patch、
+  resolve permission。
+- member-capable endpoint：list/get task、claim/update own task、send message、report status。
+- server API 不信任 request body 中的 actor；actor 必须由 authenticated session/client context
+  与 team membership 派生。
+- local mode 也使用同一 actor validation path，避免 local/server 行为分叉。
+- SSE `PayloadTypeTeamEvent` 只向有 workspace 访问权的 client 广播；payload 内仍不包含 raw
+  secret、raw patch content 或完整 tool output。
 
 ### Request / response shape
 
@@ -500,6 +615,9 @@ budget_exceeded
 team_archived
 member_not_running
 runtime_unavailable
+feature_disabled
+not_implemented
+artifact_integrity_failed
 ```
 
 ### TeamEvent payload
@@ -529,18 +647,56 @@ Client 规则：
 - missing `seq` 视为不可 replay event，强制 reload snapshot。
 - API list 默认分页，`limit` 最大 100，返回 `next_cursor`。
 
-## Service 接口
+### SSE / proto 类型
+
+server/client mode 必须沿用现有 `internal/server/events.go` 的 envelope 模式，而不是发裸 JSON。
+M2 新增以下最小类型：
+
+```go
+// internal/pubsub/events.go
+const PayloadTypeTeamEvent PayloadType = "team_event"
+
+// internal/proto/team.go
+type TeamEvent struct {
+    WorkspaceID   string         `json:"workspace_id"`
+    TeamID        string         `json:"team_id"`
+    Seq           int64          `json:"seq"`
+    EventType     string         `json:"event_type"`
+    EntityType    string         `json:"entity_type"`
+    EntityID      string         `json:"entity_id"`
+    ActorMemberID string         `json:"actor_member_id,omitempty"`
+    TaskID        string         `json:"task_id,omitempty"`
+    RunID         string         `json:"run_id,omitempty"`
+    MessageID     string         `json:"message_id,omitempty"`
+    Payload       map[string]any `json:"payload,omitempty"`
+    CreatedAt     int64          `json:"created_at"`
+}
+
+// internal/server/events.go
+func teamEventToProto(e team.Event) proto.TeamEvent
+```
+
+`wrapEvent` 必须新增 `pubsub.Event[team.Event] -> PayloadTypeTeamEvent` 分支；`internal/client/proto.go`
+必须新增 `PayloadTypeTeamEvent` case。旧 client 看到 unknown payload type 时继续忽略并记录 warning；
+新 client 对 unknown `event_type` 只 reload snapshot，不崩溃。
+
+## Service / Store 接口
+
+`team.Service` 是 use-case facade，不是 database dump。server/client/workspace/UI 只依赖
+facade；SQL/query 边界放在 milestone-scoped store 里。跨表事务只能由 Service 编排，store
+不向外部层暴露。
+
+M2 facade 只包含 core durable domain 能力：
 
 ```go
 type Service interface {
-    CreateTeam(ctx context.Context, req CreateTeamRequest) (Team, error)
-    GetTeam(ctx context.Context, teamID string) (TeamSnapshot, error)
-    ListTeams(ctx context.Context, workspaceID string) ([]Team, error)
-    ArchiveTeam(ctx context.Context, teamID string, expectedVersion int64) error
+    CreateTeam(ctx context.Context, req CreateTeamRequest) (TeamSnapshot, error)
+    GetTeamSnapshot(ctx context.Context, workspaceID, teamID string) (TeamSnapshot, error)
+    ListTeams(ctx context.Context, workspaceID string, filter TeamFilter) ([]Team, error)
+    ArchiveTeam(ctx context.Context, req ArchiveTeamRequest) error
 
     SpawnMember(ctx context.Context, req SpawnMemberRequest) (TeamMember, error)
     UpdateMemberState(ctx context.Context, req UpdateMemberStateRequest) (TeamMember, error)
-    StopMember(ctx context.Context, req StopMemberRequest) error
     ListMembers(ctx context.Context, teamID string) ([]TeamMember, error)
 
     CreateTask(ctx context.Context, req CreateTaskRequest) (TeamTask, error)
@@ -548,28 +704,98 @@ type Service interface {
     UpdateTask(ctx context.Context, req UpdateTaskRequest) (TeamTask, error)
     ClaimNextTask(ctx context.Context, req ClaimNextTaskRequest) (TeamTask, error)
     ListTasks(ctx context.Context, teamID string, filter TaskFilter) ([]TeamTask, error)
-    AddTaskDependency(ctx context.Context, req AddTaskDependencyRequest) (TaskDependency, error)
-    ListTaskDependencies(ctx context.Context, teamID, taskID string) ([]TaskDependency, error)
-
-    AppendMailbox(ctx context.Context, req AppendMailboxRequest) (MailboxMessage, error)
-    ListUnread(ctx context.Context, teamID, memberID string, limit int) ([]MailboxMessage, error)
-    MarkDelivered(ctx context.Context, req MarkReceiptRequest) error
-    MarkRead(ctx context.Context, req MarkReceiptRequest) error
 
     StartRun(ctx context.Context, req StartRunRequest) (TeamRun, error)
     HeartbeatRun(ctx context.Context, runID string) error
     FinishRun(ctx context.Context, req FinishRunRequest) error
-    CancelRun(ctx context.Context, runID string) error
+    MarkRunTerminal(ctx context.Context, req MarkRunTerminalRequest) error
 
-    AppendArtifact(ctx context.Context, req AppendArtifactRequest) (TeamArtifact, error)
-    AppendAudit(ctx context.Context, req AuditEvent) error
     ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
-    CreatePermissionRequest(ctx context.Context, req CreateTeamPermissionRequest) (TeamPermissionRequest, error)
-    ResolvePermissionRequest(ctx context.Context, req ResolveTeamPermissionRequest) (TeamPermissionRequest, error)
-    FindActiveGrant(ctx context.Context, req FindTeamGrantRequest) (TeamPermissionGrant, error)
     DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
 }
 ```
+
+M2 internal stores：
+
+```go
+type TeamStore interface {
+    CreateTeam(ctx context.Context, tx Tx, req CreateTeamRequest) (Team, error)
+    GetTeam(ctx context.Context, tx Tx, teamID string) (Team, error)
+    ListTeams(ctx context.Context, tx Tx, workspaceID string, filter TeamFilter) ([]Team, error)
+    ArchiveTeam(ctx context.Context, tx Tx, req ArchiveTeamRequest) error
+}
+
+type MemberStore interface {
+    CreateMember(ctx context.Context, tx Tx, req SpawnMemberRequest) (TeamMember, error)
+    UpdateMemberState(ctx context.Context, tx Tx, req UpdateMemberStateRequest) (TeamMember, error)
+    ListMembers(ctx context.Context, tx Tx, teamID string) ([]TeamMember, error)
+}
+
+type TaskStore interface {
+    CreateTask(ctx context.Context, tx Tx, req CreateTaskRequest) (TeamTask, error)
+    GetTask(ctx context.Context, tx Tx, teamID, taskID string) (TeamTask, error)
+    UpdateTaskCAS(ctx context.Context, tx Tx, req UpdateTaskRequest) (TeamTask, error)
+    ClaimNextTask(ctx context.Context, tx Tx, req ClaimNextTaskRequest) (TeamTask, error)
+    ListTasks(ctx context.Context, tx Tx, teamID string, filter TaskFilter) ([]TeamTask, error)
+}
+
+type RunStore interface {
+    StartRun(ctx context.Context, tx Tx, req StartRunRequest) (TeamRun, error)
+    HeartbeatRun(ctx context.Context, tx Tx, runID string) error
+    FinishRun(ctx context.Context, tx Tx, req FinishRunRequest) error
+    MarkRunTerminal(ctx context.Context, tx Tx, req MarkRunTerminalRequest) error
+}
+
+type EventStore interface {
+    AppendEvent(ctx context.Context, tx Tx, req AppendEventRequest) (TeamEvent, error)
+    ListEventsAfter(ctx context.Context, tx Tx, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
+}
+
+type AuditStore interface {
+    AppendAudit(ctx context.Context, tx Tx, req AuditEvent) error
+    ListAudit(ctx context.Context, tx Tx, filter AuditFilter) ([]AuditEvent, error)
+}
+```
+
+`MarkRunTerminalRequest` 用于 `canceled` / `interrupted` / `failed` 等非正常完成路径，不能只传
+`run_id`。最小字段：
+
+```text
+run_id
+team_id
+member_id
+expected_status       running | waiting_permission | queued
+terminal_status       canceled | interrupted | failed
+reason                user_requested | leader_requested | shutdown | timeout | runtime_lost | system
+actor
+usage_status          partial | unknown
+error
+finished_at
+```
+
+规则：
+
+- terminal update 必须 CAS 当前 run 状态；已经 `completed/canceled/interrupted/failed` 的 run
+  不能被 late result 覆盖。
+- `CancelMemberTurn`、shutdown、startup recovery 和 runtime panic recovery 都使用该 request。
+- audit/event 仍由 `team.Service` 在同一 transaction 编排，store 不直接 publish。
+
+后续阶段按消费时机追加 store：
+
+| 阶段 | 追加 store | facade 扩展 |
+| --- | --- | --- |
+| M3 | `MailboxStore`, `ReceiptStore`, `DependencyStore`, `ArtifactStore`, `SessionLinkStore` | mailbox、receipt、dependency、artifact、session visibility use cases |
+| M3.5 | `ProposalStore` 或复用 `ArtifactStore` 的 `change_proposal` subset | proposal review/revise/discard/accept-for-patch |
+| M4 | `PermissionStore`, `GrantStore` | team permission request、resolve、grant lookup |
+| M5 | `PatchStore`, `ContentStore`, `ApplyConflictStore` | patch artifact、content verification、apply/reject/conflict |
+
+规则：
+
+- 每个里程碑只要求实现当阶段 store；未到阶段的 use case 不允许 stub 成“看起来可用”。
+- flag off 或未到阶段时返回 `feature_disabled` / `not_implemented`，不能创建部分状态。
+- store 只接受 `tx` 或 query executor，不自己开启跨表 transaction。
+- Service method 必须负责 `domain row + audit + event` 的事务编排。
+- server/client/UI 不 import store interface；只通过 `team.Service` / `TeamWorkspace` 访问。
 
 ## 事务规则
 
@@ -577,7 +803,7 @@ type Service interface {
 - LLM call 不在 transaction 内。
 - permission wait 不持有 transaction。
 - `ClaimNextTask` 必须是 atomic SQL，不允许 select 后 update。
-- event publish 失败不回滚 DB。
+- SSE/pubsub 通知失败不回滚 DB 事务。`team_events` row 必须与 domain row 原子写入。
 - 每个可重试写操作必须有 idempotency key 或明确不可重试。
 
 ## Snapshot 契约

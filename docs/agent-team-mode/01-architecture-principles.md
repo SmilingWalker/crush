@@ -68,6 +68,10 @@ SessionAgent turn:
 特别注意：`SessionAgent.Run` 可能因为同 session busy 返回 queued case。TeamRunner 不得
 把 queued case 当作 task completed。
 
+`SessionAgent` 实例本身也不是可随意共享的 session router。tools、models、messageQueue 和
+activeRequests 都是实例字段；delegate/member runner 必须由 AgentFactory 创建独立实例，并由
+MemberRunner 自己做 single-flight gate。
+
 ## 5. 权限默认最小化
 
 M1 只允许 read-only delegates。M4 之前 teammate 不等待用户授权继续写工具。
@@ -92,7 +96,8 @@ workspace
 
 ## 6. Patch 先于 direct write
 
-M5 前 teammate 不直接修改主工作区。写作业流程是：
+M5 前 teammate 不直接修改主工作区。M3.5 可以先产 `change_proposal` 作为实现提案，但不
+apply、不写文件。M5 的写作业流程是：
 
 ```text
 teammate generates patch artifact

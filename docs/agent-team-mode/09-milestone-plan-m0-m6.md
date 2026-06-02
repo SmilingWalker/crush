@@ -10,7 +10,9 @@
 | M0.5 | 无 | MemberRunner hidden spike | 内部 debug 演示 |
 | M1 | 并行只读 delegates | DelegateRunner + read-only safety | 可产品演示 |
 | M2 | team/member/task snapshot | DB/API/SSE/TeamService | debug 演示 |
+| M2.5 | 可重试 team write API | idempotency + API hardening | server/client 稳定性演示 |
 | M3 | 长期 teammate 收消息和跑任务 | TeamRunner + mailbox + scheduler | 真正 team 演示 |
+| M3.5 | change proposal 预览 | proposal artifact + review UI | 实现型价值演示 |
 | M4 | 权限桥和共享任务板 | permission/audit/task CAS | 安全协作演示 |
 | M5 | patch artifact 写作业 | patch review/apply | 可控写代码演示 |
 | M6 | worktree/process/A2A | external runtime adapter | 高级扩展演示 |
@@ -74,7 +76,7 @@ Next:
 
 ### 退出条件
 
-- `experimental.agent_team_preview=false` 默认关闭。
+- `Options.Experimental.AgentTeamPreview=false` 且 `Options.Experimental.AgentTeam=false` 默认关闭。
 - old `/agent` 行为不变。
 - M1 issue 可以拆分。
 - M0.5 spike 任务明确。
@@ -88,14 +90,17 @@ Next:
 ### 实现
 
 - `MemberRunner` in-memory loop。
-- 独立 member session。
+- 独立 member child session。
+- 独立 `SessionAgent` runner，不复用 `Coordinator.currentAgent`。
+- member runner single-flight gate；不依赖 `SessionAgent.messageQueue` 追踪 team lifecycle。
 - `Start/Send/CancelCurrentTurn/Stop/Status`。
-- app shutdown cancel/wait/flush。
+- app shutdown cancel/wait，并通过 message service flush。
 
 ### 交付件
 
 - hidden spike 代码或 spike branch。
 - MemberRunner 状态机测试。
+- AgentFactory 独立 runner ownership 测试。
 - shutdown/cancel goroutine 泄漏检查。
 - spike 结论：能否复用 `SessionAgent.Run`，需要抽取哪些接口。
 
@@ -113,9 +118,11 @@ Next:
 ### 退出条件
 
 - mate run 不阻塞 leader。
+- mate runner 与 coder runner 的 tools/models/messageQueue/activeRequests 隔离。
 - cancel 后可继续。
 - stop 不泄漏 goroutine。
 - `SessionAgent.Run` queued case 不误判 completed。
+- 没有 queued-start callback 时，不把 `SessionAgent.messageQueue` 用作 team mailbox。
 
 ## M1：Safe Team Preview / Read-only Delegates
 
@@ -126,17 +133,19 @@ leader 可以一次派出 1-3 个只读 delegates 做并行调研，并把结果
 ### 实现
 
 - `DelegateRunner`。
-- `DelegateRunGroup`。
+- in-memory `DelegateRunGroup`。
 - child session per delegate。
-- read-only tool policy。
-- ActorContext skeleton。
+- independent `SessionAgent` runner per delegate。
+- read-only tool allow-list：`view`、`grep`、`glob`、`ls`。
+- `internal/actor.ActorContext` skeleton。
 - sensitive file deny-list。
 - MCP/skills filtering。
 - cancel group。
+- M3-reusable primitives: child session creation, actor context propagation, tool filtering, cancel/result aggregation。
 
 ### 交付件
 
-- `DelegateRunner` 和 `DelegateRunGroup`。
+- `DelegateRunner` 和 in-memory `DelegateRunGroup`。
 - actor-aware read-only tool policy。
 - sensitive deny-list tests。
 - delegate result 聚合结构。
@@ -151,6 +160,13 @@ researcher-a  running  00:21  grep parser
 reviewer-b    done     00:34  result ready
 ```
 
+必须支持 lifecycle state：
+
+```text
+initializing -> running -> partial -> aggregating -> ready -> inserted
+                         -> canceled / failed
+```
+
 Actions:
 
 ```text
@@ -162,11 +178,16 @@ insert aggregated result
 ### 退出条件
 
 - 两个 delegate 可并行执行。
-- delegate 只能读 workspace 内非敏感文件。
-- `.env`、`*.pem`、`credentials.*` 拒绝。
+- delegate 只能读 canonical workspace root 内非敏感文件。
+- delegate 拒绝 `07-safety-permission-audit.md` / `12-open-architecture-issues.md`
+  定义的敏感文件 deny-list 中所有默认模式，并覆盖 path 绕过测试。
 - delegate 不注入 user/global MCP instructions。
 - cancel group 生效。
 - result 聚合可追踪到 child session。
+- partial/aggregating/ready/inserted 状态可见且 action 不重复执行。
+- open child transcript 是只读 modal，关闭后回到原 delegate row。
+- M1 不创建 durable team tables，不写 `team_runs` / `team_events`，不依赖 AgentRegistry 持久状态。
+- M1 primitives 在 M3 `MemberRunner`/tool filtering/cancel path 中可复用。
 - flag off 无任何 UI/API/prompt/tool 变化。
 
 ## M2：Durable Team Domain + TeamService
@@ -181,6 +202,7 @@ teammate 开始工作。
 - team DB schema。
 - sqlc queries。
 - `team.Service`。
+- M2 core stores: `TeamStore`、`MemberStore`、`TaskStore`、`RunStore`、`EventStore`、`AuditStore`。
 - `TeamWorkspace` local/client interface。
 - HTTP routes。
 - `PayloadTypeTeamEvent`。
@@ -188,10 +210,25 @@ teammate 开始工作。
 - AgentRegistry skeleton。
 - cost budget fields。
 
+M2 core tables:
+
+```text
+teams
+team_members
+team_tasks
+team_runs
+team_events
+team_event_counters
+team_audit_events
+```
+
+M2 不创建 mailbox、artifact、session links 或 idempotency tables；这些进入 M3/M2.5。
+
 ### 交付件
 
 - DB migration 和 sqlc queries。
 - `team.Service` transactional API。
+- M2 store implementation，不包含 mailbox/artifact/permission/patch store。
 - local/server/client workspace team contract。
 - `PayloadTypeTeamEvent` 与 snapshot replay。
 - debug snapshot UI。
@@ -208,13 +245,57 @@ events: seq 18
 budget: $0.00 / $2.00
 ```
 
+Actions:
+
+```text
+refresh snapshot
+copy snapshot json
+copy team id
+archive team
+```
+
 ### 退出条件
 
 - create team/member/task 可用。
 - snapshot 包含 team/members/tasks/runs/events/cost。
 - event seq 可 replay。
+- M2 migration 只包含 core tables；`team_session_links`、mailbox/artifact/dependency 表和
+  `team_idempotency_keys` 不在 M2 创建。
+- M2 `team.Service` 不暴露未到阶段的 mailbox/permission/patch use case；调用返回
+  `feature_disabled` / `not_implemented`。
 - server/client 和 local mode 都支持。
+- debug snapshot UI 可从 seq gap/stale state 恢复。
 - old `/agent` 行为不变。
+
+## M2.5：Server/client API Hardening
+
+### 用户功能
+
+用户不直接感知新功能；这一阶段的价值是让 server/client mode 的 team 写操作可以安全重试，
+避免网络断开、client 重连或 SSE gap repair 时重复创建 team/member/task。
+
+### 实现
+
+- `team_idempotency_keys` migration。
+- retryable write API contract。
+- request hash / response ref 存储。
+- idempotency conflict structured error。
+- server/client tests for duplicate request and mismatched request hash。
+
+### 交付件
+
+- `team_idempotency_keys` 表与 sqlc queries。
+- CreateTeam / SpawnMember / CreateTask idempotency enforcement。
+- API wrapper 对 idempotency conflict 的错误编码。
+- client retry path 测试。
+
+### 退出条件
+
+- 相同 key + 相同 request 返回原 response ref，不重复写 domain row/event/audit。
+- 相同 key + 不同 request 返回 `idempotency_conflict`。
+- 未带 key 的 write API 要么明确不可重试，要么被拒绝。
+- local/debug path 可以保留 optional/no-op，但 server/client retryable contract 必须强制执行。
+- M2 core migration 不被回改；M2.5 migration 独立可回滚。
 
 ## M3：In-process TeamRunner + Mailbox + Scheduler
 
@@ -232,13 +313,16 @@ M3a:
 - scheduler claim。
 - run heartbeat。
 - startup recovery。
+- fixed shutdown/cancel/flush order。
 - compact team item。
 
 M3b:
 
 - mailbox。
 - message receipts。
+- session links for member visibility/recovery。
 - task dependencies。
+- M3 stores: `MailboxStore`、`ReceiptStore`、`DependencyStore`、`ArtifactStore`、`SessionLinkStore`。
 - prompt envelope builder。
 - member reporting tools。
 
@@ -247,6 +331,7 @@ M3b:
 - durable mailbox 和 receipt。
 - TeamRunner + MemberRunner lifecycle。
 - scheduler claim/wakeup/heartbeat/recovery。
+- graceful shutdown and startup stale recovery policy。
 - teammate prompt envelope。
 - `team_report_status` / `team_send_message` tools。
 - M3 compact team item。
@@ -259,16 +344,66 @@ researcher  running  task_12  grep  00:38
 tester      idle     -        -     -
 ```
 
+expanded team item 必须有内部 viewport 和 action bar，不能把 chat timeline 挤出可读范围。
+
 ### 退出条件
 
 - leader spawn member。
-- member 有独立 session。
+- member 有独立 child session 和 runner。
 - leader send message 后 member 被唤醒。
 - member run one turn。
 - member report status。
 - heartbeat/recovery 可测。
+- cancel member turn 可测：member 进入 `canceling_turn`，当前 run 进入 `canceled` 或
+  `interrupted`，late result 不覆盖 terminal state。
+- shutdown 顺序可测：stop wakeups -> event/audit -> cancel/wait -> message service flush -> mark stopped -> publish。
+- stale run recovery 可测：heartbeat 过期 run 标记 `interrupted`，member 恢复 idle/blocked。
+- M3 不消费 permission wait/approval；permission control message 只保留 schema。
+- prompt envelope priority 可测：task 不截断、direct 优先 broadcast、peer input untrusted。
 - mailbox delivered/read 可追踪。
 - compact UI 可展示状态。
+- expanded item 在 24 行终端下不遮挡后续 chat content，内部滚动可测。
+
+## M3.5：Change Proposal Preview
+
+### 用户功能
+
+teammate 可以在只读能力下生成 `change_proposal` artifact。leader/user 可以 review、request revision、
+discard 或 accept for patch。M3.5 不允许 apply，不写 workspace。
+
+### 实现
+
+- `change_proposal` artifact kind。
+- proposal metadata: target files、轻量结构化 proposed hunks、risk、verification suggestions。
+- proposal status: pending_review / revise_requested / discarded / accepted_for_patch。
+- proposal review modal。
+- mailbox feedback path for request revision。
+
+### 交付件
+
+- `AppendArtifact(kind=change_proposal)`。
+- proposal list/review UI。
+- proposal status update service。
+- M3.5 演示脚本。
+
+### UI
+
+```text
+Proposal proposal_01  writer  task_14  3 files  review only
+Actions: review / request revision / discard / accept for patch
+```
+
+review modal 必须显示 target files、轻量 hunk/pseudo diff、risk、suggested verification，并明确 `review only`。
+
+### 退出条件
+
+- teammate 能生成 change proposal。
+- proposal 不使用 write/edit/bash，不写 workspace。
+- review modal 可展示 target files、intent、anchor/line hint、before/after summary 和 pseudo diff。
+- proposal 只做轻量结构校验；line/anchor/pseudo diff 不要求精确可应用。
+- request revision 会回到 mailbox/task feedback path。
+- accept for patch 只更新 proposal 状态，不生成可 apply patch。
+- discard 写 audit/debug history。
 
 ## M4：Permission Bridge + Audit + Shared Task Board
 
@@ -279,7 +414,8 @@ teammate 请求权限时，UI 能显示是谁、为什么、对哪个 task、哪
 
 ### 实现
 
-- PermissionBridge。
+- PermissionBridge as team-aware wrapper over existing `permission.Service` / PreToolUse hook flow。
+- `PermissionStore` / `GrantStore`。
 - scoped grants: call/task/session。
 - permission pending state machine。
 - team audit coverage。
@@ -290,6 +426,7 @@ teammate 请求权限时，UI 能显示是谁、为什么、对哪个 task、哪
 ### 交付件
 
 - team-aware permission request source。
+- existing permission dialog extension, not a parallel modal。
 - scoped grant state machine。
 - permission dialog with member/task/run context。
 - task CAS/debug UI。
@@ -306,11 +443,25 @@ path: docs/foo.md
 scope: once | task | deny
 ```
 
+队列/超时：
+
+```text
+pending permissions: 2 more
+expires in: 01:12
+expired -> actions disabled -> view audit / close
+```
+
 ### 退出条件
 
 - permission UI 展示 team/member/task/run/tool/path。
+- 非 team session 仍走现有 permission service，行为不变。
+- `allow once` 只 resolve 当前 tool call；`allow task` 创建 team-scoped grant，不写现有 session-wide
+  persistent grant。
+- 多个 pending permission 按队列展示，当前请求 resolve/expire/cancel 后可进入下一条。
+- expired/late response 不创建 grant，UI 显示 request ended。
 - deny 后 member blocked 并 report alternative。
 - allow task 不扩散到其他 task。
+- hook deny 仍阻止执行；hook allow 仍必须写 team audit。
 - late response 不影响已结束 run。
 - audit 可查询。
 - task version conflict 返回 structured error。
@@ -324,6 +475,8 @@ teammate 可以生成 patch artifact。leader 在 UI 中 review diff，然后 ap
 ### 实现
 
 - patch artifact。
+- `PatchStore` / `ContentStore` / `ApplyConflictStore`。
+- app data filesystem blob store as M5 first implementation。
 - base hash。
 - touched files summary。
 - verification log artifact。
@@ -335,6 +488,7 @@ teammate 可以生成 patch artifact。leader 在 UI 中 review diff，然后 ap
 ### 交付件
 
 - patch artifact schema 和 content store。
+- filesystem blob store with opaque ref/hash contract。
 - patch review/apply service。
 - base hash conflict handling。
 - `team_apply_conflicts` 记录 apply 失败原因。
@@ -349,14 +503,26 @@ Patch patch_01  3 files  base ok  ready
 Actions: review / apply / reject
 ```
 
+review modal 使用 unified diff，支持 file/hunk 导航、大 diff summary mode、binary review-only。
+
 ### 退出条件
 
 - patch artifact 可生成。
+- content store 第一版落在 app data，不落在 editable workspace；API/DB/UI 只暴露 opaque ref。
 - base mismatch 不覆盖文件。
 - conflict artifact 可见。
+- patch review UI 可展示 file list、hunk、verification log、binary review-only 状态。
+- 大 diff 不撑爆 TUI；超过阈值默认 summary mode。
 - M5 不创建 worktree runtime，不给 teammate direct write lease。
 - apply/reject 写 audit。
 - verification log 可查看。
+
+### 后续改进
+
+- M5.1 orphan blob sweep。
+- M5.2 workspace/team quota、单 artifact size limit、retention policy。
+- M6+ DB blob / CAS object store / remote backend adapter。
+- 可选 content encryption；不改变 `ContentStore` API。
 
 ## M6：Advanced Runtime / Worktree / A2A Gateway
 

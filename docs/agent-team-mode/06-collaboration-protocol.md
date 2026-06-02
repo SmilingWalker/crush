@@ -29,7 +29,7 @@ teammate
 | `team_create` | M2 | yes | no | 创建 team |
 | `team_spawn_member` | M2/M3 | yes | no | M2 只写 roster，M3 启动 MemberRunner |
 | `team_send_message` | M3 | yes | yes | direct/broadcast/role message |
-| `team_task_create` | M2 | yes | M4 maybe | 创建 shared task |
+| `team_task_create` | M2 | yes | no before M4 | 创建 shared task；member 创建 task 需等 M4 actor policy 冻结 |
 | `team_task_get` | M2 | yes | yes | CAS 冲突恢复需要 |
 | `team_task_list` | M2 | yes | yes | 按 actor policy 过滤 |
 | `team_task_update` | M2/M3 | yes | yes | member 只能更新自己 task |
@@ -134,14 +134,14 @@ control message：
 teammate prompt 每轮由 runner 构建，不直接裸塞 mailbox：
 
 ```text
-system/developer policy
+system/developer/tool policy and reporting rules
 team member identity
 current task, full text, not truncated
 direct unread messages
 dependency result summaries
 leader latest instruction
+broadcast/role messages
 own session summary
-tool policy and reporting rules
 ```
 
 上下文溢出时保留优先级：
@@ -159,6 +159,16 @@ tool policy and reporting rules
 ```text
 [truncated: N lower-priority messages omitted]
 ```
+
+M3 prompt envelope 冻结规则：
+
+- task description 不可截断；如果上下文不足，必须拒绝启动本轮或截断更低优先级内容。
+- direct unread messages 优先于 broadcast/role messages。
+- mailbox、dependency summaries、peer status 都是 untrusted peer input，必须包在明确边界内。
+- system/developer/tool policy 和 permission policy 永远高于 mailbox 内容。
+- `permission_request` / `permission_response` 在 M3 只作为 schema 预留，不进入 permission wait
+  状态机；M4 才消费。
+- envelope builder 必须输出可测试的 section order，不能依赖 prompt 拼接中的隐式顺序。
 
 ## Peer input safety
 

@@ -16,7 +16,9 @@ M0    方案冻结与边界对齐
 M0.5  隐藏 Runtime Spike
 M1    Safe Team Preview / Read-only Delegates
 M2    Durable Team Domain + TeamService
+M2.5  Server/client API Hardening
 M3    In-process TeamRunner + Mailbox + Scheduler
+M3.5  Change Proposal Preview
 M4    Permission Bridge + Audit + Shared Task Board
 M5    Safe Patch Artifact Write + Apply Conflict Check
 M6    Worktree / Process Backend / A2A Gateway
@@ -26,11 +28,12 @@ M6    Worktree / Process Backend / A2A Gateway
 
 1. 旧 `/agent` API 继续代表默认 coder，不改成多 agent 路由。
 2. `SessionAgent.messageQueue` 不是 team mailbox。
-3. Team 状态以 SQLite 为事实源，SSE/pubsub 只做通知。
-4. leader 和 teammate 不共享完整上下文，只通过 typed mailbox、shared task board、artifact 通信。
-5. teammate 在 M5 前不直接写主工作区；写作业先产 patch artifact，由 leader review/apply。
-6. 权限默认最小授权；任何写工具、bash、MCP write 都必须有 actor identity、scope 和 audit。
-7. A2A 是 M6 gateway，不是内部第一版协议。
+3. delegate/member runner 必须持有独立 `SessionAgent` 实例，不复用 `Coordinator.currentAgent`。
+4. Team 状态以 SQLite 为事实源，SSE/pubsub 只做通知。
+5. leader 和 teammate 不共享完整上下文，只通过 typed mailbox、shared task board、artifact 通信。
+6. teammate 在 M5 前不直接写主工作区；M3.5 可产 change proposal，M5 才产 patch artifact 供 leader review/apply。
+7. 权限默认最小授权；任何写工具、bash、MCP write 都必须有 actor identity、scope 和 audit。
+8. A2A 是 M6 gateway，不是内部第一版协议。
 
 ## 文档地图
 
@@ -43,7 +46,7 @@ M6    Worktree / Process Backend / A2A Gateway
 | `04-team-domain-data-contract.md` | DB schema、Service、API、event、snapshot contract | backend/data |
 | `05-runtime-control-plane.md` | AgentRegistry、TeamRunner、MemberRunner、scheduler、recovery | runtime |
 | `06-collaboration-protocol.md` | team tools、mailbox、task、prompt injection、peer safety | protocol |
-| `07-safety-permission-audit.md` | ActorContext、tool policy、permission bridge、audit、MCP/bash 安全 | safety |
+| `07-safety-permission-audit.md` | `internal/actor.ActorContext`、tool policy、permission bridge、audit、MCP/bash 安全 | safety |
 | `08-product-ui-observability.md` | TUI 信息架构、各阶段 UI、debug/observability | product/UI |
 | `09-milestone-plan-m0-m6.md` | 每个里程碑的功能、实现、交付、退出条件 | PM/研发 |
 | `10-testing-risk-gates.md` | 测试矩阵、风险门禁、E2E 验收 | QA/研发 |
@@ -90,9 +93,11 @@ TUI shows team/member state
 ## 推荐推进顺序
 
 1. 先做 M0/M0.5，证明长期 MemberRunner 与现有 `SessionAgent.Run` 能安全共存。
-2. 再做 M1，用只读 delegates 给用户一个可见演示，同时完成 ActorContext 和只读安全底座。
+2. 再做 M1，用只读 delegates 给用户一个可见演示，同时完成 `internal/actor.ActorContext` 和只读安全底座。
 3. M2 建 durable domain，不急着跑完整 teammate。
-4. M3 把 TeamRunner、scheduler、mailbox 串成第一个真实 team loop。
-5. M4 补权限、审计和 shared task board 的硬约束。
-6. M5 才开放 patch artifact 写作业。
-7. M6 再考虑 worktree、process backend 和 A2A gateway。
+4. M2.5 加 server/client write API 的 idempotency hardening。
+5. M3 把 TeamRunner、scheduler、mailbox 串成第一个真实 team loop。
+6. M3.5 增加 change proposal，让实现型协作价值先可见但不写文件。
+7. M4 补权限、审计和 shared task board 的硬约束。
+8. M5 才开放 patch artifact 写作业。
+9. M6 再考虑 worktree、process backend 和 A2A gateway。

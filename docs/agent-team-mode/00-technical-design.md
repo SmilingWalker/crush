@@ -111,7 +111,8 @@ tool call from member
 M5 前，teammate 不直接写主工作区。需要修改文件时：
 
 ```text
-teammate -> patch artifact -> leader review -> apply/reject -> audit
+M3.5: teammate -> change_proposal artifact -> leader review/revise/discard
+M5:   teammate -> patch artifact -> leader review -> apply/reject -> audit
 ```
 
 ## 代码落点
@@ -129,6 +130,34 @@ teammate -> patch artifact -> leader review -> apply/reject -> audit
 | `internal/pubsub` | 新 TeamEvent payload | 只做通知，不做事实源 |
 | `internal/ui` | Team compact item、permission、patch review | 每个阶段有对应 UI，不做一次性大 dashboard |
 
+## Feature flag 契约
+
+AgentTeam Mode 必须默认关闭，并且 flag-off 时 old `/agent`、默认 coder、TUI、server/client API
+和 prompt 都不能出现 team 行为。代码库当前没有 `experimental` 配置结构，因此 PR-0 必须先新增
+明确字段，而不是在各模块里散落 bool：
+
+```go
+type ExperimentalOptions struct {
+    AgentTeamPreview bool `json:"agent_team_preview,omitempty"`
+    AgentTeam        bool `json:"agent_team,omitempty"`
+}
+
+type Options struct {
+    // existing fields...
+    Experimental *ExperimentalOptions `json:"experimental,omitempty"`
+}
+```
+
+规则：
+
+- `AgentTeamPreview` 控制 M1 read-only delegates 和隐藏 spike 可见入口。
+- `AgentTeam` 控制 M2+ durable team API、TUI、tools、runtime。
+- 两个 flag 默认 false；`Experimental == nil` 等价于全部 false。
+- team tools、leader prompt 注入、TUI team item、server team routes、client team methods 都必须读取同一
+  gate helper，不能各自解析配置。
+- flag-off 的 team endpoint 返回稳定 `feature_disabled`，不创建 DB row、不发 SSE。
+- preview flag 不能自动打开可写能力；M5 patch write 只能在 `AgentTeam=true` 且阶段代码已启用时出现。
+
 ## 核心模块
 
 ### `internal/team`
@@ -145,38 +174,91 @@ teammate -> patch artifact -> leader review -> apply/reject -> audit
 
 ### `internal/agent`
 
-保持默认 coder 行为稳定，只暴露窄接口给 team：
+保持默认 coder 行为稳定，只暴露窄接口给 team。`TeamAgentCall` 是 team runtime 调用 agent
+的适配层契约，不能改写或重载现有 `internal/agent.SessionAgentCall`：
 
 ```go
+// internal/agent/team_call.go
 type TurnRunner interface {
-    Run(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error)
+    Run(ctx context.Context, call TeamAgentCall) (TurnRunResult, error)
     Cancel(sessionID string)
     IsSessionBusy(sessionID string) bool
-    FlushAll(ctx context.Context) error
 }
 
 type AgentFactory interface {
-    Build(ctx context.Context, spec AgentSpec) (TurnRunner, error)
+    BuildTeamRunner(ctx context.Context, spec AgentSpec) (TurnRunner, error)
+}
+
+type RuntimeMessageFlusher interface {
+    FlushAll(ctx context.Context) error
 }
 ```
 
-`SessionAgentCall` 是 team runtime 调用 agent 的唯一契约：
+`TeamAgentCall` 是 team runtime 调用 agent 的唯一契约。它不能与现有
+`internal/agent.SessionAgentCall` 同名，因为现有结构已被 `SessionAgent.Run` 直接消费。
+M0.5 spike 必须实现 `TeamAgentCallAdapter`，把 team 语义转换成现有 `SessionAgentCall`。
+
+`AgentFactory` 的冻结语义：
+
+- 每个 delegate/member runner 必须持有独立的 `SessionAgent` 实例；不能返回或复用
+  `Coordinator.currentAgent`。
+- `SessionAgent` 实例内持有 `tools`、`largeModel/smallModel`、`messageQueue` 和
+  `activeRequests`。这些字段不是按 session 隔离的共享资源；共享实例会导致工具、模型、队列和
+  cancel 状态互相污染。
+- coder 的 `SetTools` / `SetModels` 只能影响 coder runner；delegate/member 的工具和模型策略在
+  `BuildTeamRunner` 时按 `AgentSpec` 固化。
+- `FlushAll` 不属于现有 `SessionAgent` 接口；team runtime 需要 flush 时通过注入的
+  `RuntimeMessageFlusher` / message service 完成，不能假设 agent runner 自带 flush 能力。
+- `AgentFactory` 可以复用现有模型、工具、prompt 构建逻辑，但必须以受限 tool policy 和
+  instructions policy 创建新的 runner；不得让 team runtime 访问 coordinator private fields。
 
 ```go
-type SessionAgentCall struct {
+type TeamAgentCall struct {
     SessionID      string
     ParentSessionID string
     PromptEnvelope string
-    Actor          ActorContext
+    Actor          actor.ActorContext
     ToolPolicy     ToolPolicyProfile
     StreamSink      AgentStreamSink
 }
+
+type TeamAgentCallAdapter interface {
+    ToSessionAgentCall(ctx context.Context, call TeamAgentCall) (SessionAgentCall, error)
+}
+
+type TurnStatus string
+
+const (
+    TurnCompleted TurnStatus = "completed"
+    TurnQueued    TurnStatus = "queued"
+    TurnCanceled  TurnStatus = "canceled"
+    TurnFailed    TurnStatus = "failed"
+)
+
+type TurnRunResult struct {
+    Status TurnStatus
+    Result *fantasy.AgentResult
+}
 ```
 
-`TurnRunner.Run` 必须返回明确状态：`completed`、`queued`、`canceled`、`failed`。
-MemberRunner 不能把 queued 当 completed；queued 必须保留 run state 并等待后续完成/取消。
+现有 `SessionAgent.Run` 在 session busy 时可能返回 `(nil, nil)` 表示已入队。adapter 必须把
+这个 case 转成 `TurnRunResult{Status: TurnQueued}` 或等价 sentinel，禁止把 `(nil, nil)`
+当作 completed。
+
+更重要的是，team runtime 不把 `SessionAgent.messageQueue` 当作 team mailbox 或 run
+lifecycle 来源。`MemberRunner` 默认 `max_concurrent_runs_per_member=1`，调用 `Run` 前先用
+runner 自己的状态和 `IsSessionBusy(sessionID)` 做 single-flight gate；busy 时保留 wakeup/mailbox
+状态，返回 queued/busy sentinel，不启动第二个 team run。若 adapter 仍收到 `(nil, nil)`，该
+turn 只能停留在 non-terminal queued 状态；M0.5 必须证明该 case 不会写 completed run。若未来
+确实要复用 `SessionAgent` 内部队列，必须先给 runner 增加 queued-start lifecycle callback，
+不能靠递归 `Run` 的内部实现推断后续开始时间。
 
 不要让 `Coordinator.currentAgent` 直接管理 team lifecycle。
+
+`TurnRunner.Cancel(sessionID)` 只是向对应 runner 发送 cancel signal 的轻量 primitive。它不负责写
+team run/member state，也不负责 audit/event。team 级 cancel 必须由
+`TeamRunner.CancelMemberTurn` 编排，按 `05-runtime-control-plane.md` 的顺序写状态、调用 runner、
+等待/flush 并落 terminal state。
 
 ### `internal/workspace` / `internal/server` / `internal/client`
 
@@ -195,6 +277,26 @@ GET    /v1/workspaces/{id}/teams/{team_id}/snapshot
 
 server/client mode 必须和 local mode 同步支持，不能只实现 `AppWorkspace`。
 request/response/error/SSE 的 issue-ready contract 见 `04-team-domain-data-contract.md`。
+
+`Workspace` 现有接口已经承载 session、agent、permission、MCP、config 等大量职责。team 方法不直接追加到
+这个大接口；先新增独立 `TeamWorkspace`，由 local `AppWorkspace` 和 remote `ClientWorkspace` 同时实现，
+再由 UI/API wiring 在需要 team mode 的地方组合使用：
+
+```go
+type TeamWorkspace interface {
+    CreateTeam(ctx context.Context, req proto.CreateTeamRequest) (proto.TeamSnapshot, error)
+    ListTeams(ctx context.Context, req proto.ListTeamsRequest) (proto.ListTeamsResponse, error)
+    GetTeamSnapshot(ctx context.Context, workspaceID, teamID string) (proto.TeamSnapshot, error)
+    SpawnTeamMember(ctx context.Context, req proto.SpawnTeamMemberRequest) (proto.TeamMember, error)
+    SendTeamMessage(ctx context.Context, req proto.SendTeamMessageRequest) (proto.TeamMailboxMessage, error)
+    CreateTeamTask(ctx context.Context, req proto.CreateTeamTaskRequest) (proto.TeamTask, error)
+    UpdateTeamTask(ctx context.Context, req proto.UpdateTeamTaskRequest) (proto.TeamTask, error)
+    ListTeamEventsAfter(ctx context.Context, workspaceID, teamID string, afterSeq int64, limit int) (proto.TeamEventsResponse, error)
+}
+```
+
+`AppWorkspace` 直接调用 `team.Service`；`ClientWorkspace` 只做 HTTP/proto 翻译。两者都必须走
+`feature gate -> workspace auth -> actor validation -> team.Service` 的同一顺序。
 
 ## 功能分层
 

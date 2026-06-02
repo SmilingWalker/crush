@@ -5,7 +5,9 @@ M4 才允许 permission bridge 进入可写能力前置条件。
 
 ## ActorContext
 
-新增统一 actor identity：
+新增统一 actor identity，canonical package 是 `internal/actor`。它是 agent、team、permission、
+hooks、tools 共享的轻量上下文包，不依赖 `internal/team`，避免底层工具为了读 actor 身份反向依赖
+team domain。
 
 ```go
 type ActorContext struct {
@@ -35,6 +37,10 @@ type ActorContext struct {
 - TUI permission dialog。
 
 ## M1 read-only policy
+
+M1 delegate 只做窄 allow-list，不引入新的工具权限执行链。实现方式是复用现有
+`agent.AllowedTools` / `coordinator.buildTools()` 的过滤模式，只构建明确允许的工具集合；
+`hooked_tool.go` 继续作为 PreToolUse audit/deny 的最后一道门。
 
 M1 delegate 只允许：
 
@@ -66,11 +72,31 @@ sourcegraph
 fetch
 ```
 
+初始分类表：
+
+| Tool | M1 delegate | 原因 |
+| --- | --- | --- |
+| `view` | allow | workspace 内只读文件读取，仍受 path guard 和 deny-list 约束 |
+| `grep` | allow | workspace 内只读搜索，结果需 redaction/deny-list |
+| `glob` | allow | workspace 内路径枚举，仍不能泄露敏感文件内容 |
+| `ls` | allow | workspace 内目录枚举 |
+| `sourcegraph` | deny by default | 可能触发外部代码搜索/网络路径，等 M1 后按配置开放 |
+| `fetch` / `agentic_fetch` | deny by default | 网络读取面过大，等 network policy 完成后开放 |
+| `bash` | deny | 命令执行，不属于 read-only delegate |
+| `edit` / `multiedit` / `write` / `download` | deny | 可写或落盘 |
+| `job_output` / `job_kill` / `crush_logs` | deny | 可能泄露其他运行上下文或控制进程 |
+| MCP tools / resources | deny by default | 需 actor-aware MCP policy |
+| `todos` / `agent` | deny | 会改变协作结构或创建嵌套 delegated run |
+
 路径规则：
 
-- path 必须 resolve 到 workspace root 内。
-- symlink resolve 后仍在 workspace root 内。
-- Windows 路径比较 case-insensitive。
+- path 必须先解析为 canonical absolute path，再和 canonical workspace root 比较。
+- path guard 必须在文件系统访问层执行，即 view/grep/glob/ls 真正 read/stat/list 前再次校验，
+  不能只在 tool input parsing 层校验。
+- symlink、Windows junction/reparse point resolve 后仍必须在 workspace root 内。
+- Windows 路径比较 case-insensitive，并拒绝 alternate data stream 形式。
+- 输入路径先做 URL/percent decode、Unicode normalization（NFC）和控制字符/null byte 拒绝。
+- hard link 指向的敏感文件无法可靠从路径判断时，按 basename/path deny-list 继续拒绝，并在 M1 测试中覆盖。
 - 拒绝 workspace 外路径时返回 structured denial。
 
 ## 敏感文件 deny-list
@@ -82,19 +108,33 @@ fetch
 .env.*
 credentials.json
 credentials.*
+secrets.*
 *.key
 *.pem
+*.p8
 *.p12
 *.pfx
+*.jks
 id_rsa
 id_ed25519
 *.ssh/config
+.ssh/id_*
+.kube/config
+.npmrc
+.netrc
+pip.conf
+aws/credentials
+gcloud/application_default_credentials.json
 ```
 
 实现位置：
 
-- view/grep/read 类工具路径校验后、文件读取前。
-- config 支持用户追加和移除，但默认必须开启。
+- view/grep/glob/ls 类工具路径校验后、文件读取/stat/list 前。
+- deny-list 匹配 canonical path 和 canonical basename；大小写不敏感平台按 lower-case 比较。
+- M1 safety tests 必须覆盖 symlink、junction/reparse point、percent-encoded path、Unicode 变体、
+  null byte/control char、大小写变体和敏感文件别名。
+- config 支持用户追加模式和逐路径 allow exception；默认模式不能被整体关闭，exception 必须写
+  audit/debug reason。
 
 ## MCP 与 skills 过滤
 
@@ -141,7 +181,13 @@ expires_at
 
 ## PermissionBridge
 
-M4 实现：
+M4 的 `PermissionBridge` 是现有 permission/hook 执行链的 team-aware wrapper，不是第二套
+permission subsystem。工具仍通过 `permission.Service.Request` 进入审批；`hooked_tool.go`
+仍先运行 PreToolUse hook，并且 hook deny/allow 仍由现有逻辑决定是否进入普通 permission flow。
+Team 模式只在 member runtime wiring 时注入一个实现 `permission.Service` 的 bridge，用来读取
+`ActorContext`、补全 team 归因、写 team 持久事实源和把 UI 决策映射回当前等待中的 tool call。
+
+M4 实现流程：
 
 ```text
 tool requests permission
@@ -151,7 +197,7 @@ tool requests permission
        check scoped grant
        create permission request row/audit/event
        publish waiting_permission
-       show UI with member/task/run/tool/path
+       show existing permission UI with team/member/task/run/tool/path extension
        wait response
        apply scope if allowed
        return decision
@@ -170,16 +216,31 @@ orphaned
 
 规则：
 
+- `PermissionBridge` 不替代现有 `permission.Service`；它必须包裹或适配现有 service，让非 team
+  session 行为完全不变。
+- `hooked_tool.go` 仍是执行前最终 hook gate；team bridge 不能绕过 hook deny，也不能在 hook
+  allow 时跳过 audit。
+- bridge 只把 team 语义补进 request/decision/audit：`team_id`、`member_id`、`task_id`、
+  `run_id`、`session_id`、`tool_call_id`、`tool_name`、resource 和 reason。
+- 现有 `internal/ui/dialog/permissions.go` 是第一版 UI 基座；M4 只扩展展示字段和 action mapping，
+  不做第二套完全独立弹窗。
 - run canceled 后 pending request 转为 `canceled`。
 - app 重启后无法恢复 channel 的 request 转为 `orphaned` 或重新投递 UI。
 - response 晚到且 run/tool_call 已结束，不再生效，只写 audit。
 - 默认超时后转为 `expired`，member blocked 并 report alternative。
+- `allow once` 只 resolve 当前 tool call。
+- `allow for task` 创建 team-scoped grant，并 resolve 当前 tool call；后续请求必须仍经过 bridge
+  的 grant lookup，不能写入现有 permission service 的 session-wide persistent grant。
+- `allow for session` 不在默认 UI 展示；如 M4 第一版保留高级入口，也必须写 team-scoped grant，
+  不能调用现有 `GrantPersistent` 形成缺少 task/team 约束的全 session 记忆。
 
 ## Team permission fact source
 
-Team permission 使用 team 专用持久表，不扩展现有 `internal/permission` 的内存 pending
-模型。现有 permission service 继续服务非 team session；`PermissionBridge` 在存在
-`ActorContext.TeamID` 时写 team 表。
+Team permission 使用 team 专用持久表记录事实源，但这不是独立执行链。现有 permission service
+继续提供工具等待、Grant/Deny resolve、hook approval 和非 team session 行为；team 表负责
+team/member/task/run 归因、scoped grant、late response、orphaned recovery、snapshot 和 audit。
+`PermissionBridge` 在存在 `ActorContext.TeamID` 时写 team 表，并把最终决策映射回现有
+permission waiter。
 
 ### `team_permission_requests`
 
@@ -231,6 +292,8 @@ revoked_at
 查询要求：
 
 - `FindActiveGrant(actor, tool, resource)` 必须按 scope 从窄到宽匹配。
+- grant lookup 只能由 `PermissionBridge` 在 team request path 内使用；工具、UI、server/client
+  不直接查询 grant 表来绕过 permission service。
 - app startup 查 `pending` request；无法重新连接 wait channel 的转 `orphaned` 并写 audit。
 - late response 对已结束 `run_id/tool_call_id` 不创建 grant，只更新 request decision 并写 audit。
 - `pending_permissions` snapshot 来自 `team_permission_requests where status='pending'`。
@@ -257,42 +320,35 @@ M4 起以下事件必须 audit：
 - task claim/update。
 - patch apply/reject。
 
-## Tool policy adapter
+## Tool policy 演进
 
-每个 tool 需要通过 adapter/metadata 暴露权限能力，不能要求一次性改完所有工具实现。
-PR-1/PR-2 先引入 wrapper：
+M1 不新增新的工具策略 adapter，也不要求每个 tool 立刻暴露 metadata registry。M1 的实现必须足够简单：
 
-```go
-type ToolPolicyMetadata struct {
-    Name          string
-    ReadOnly      bool
-    Destructive   bool
-    ResourceKinds []ResourceKind
-}
-
-type ToolPolicyAdapter interface {
-    Metadata(toolName string) ToolPolicyMetadata
-    ValidateInput(ctx context.Context, toolName string, input any) error
-    CheckPermissions(ctx context.Context, actor ActorContext, toolName string, input any) Decision
-}
+```text
+ActorContext
+  -> build allowed tool name set: view, grep, glob, ls
+  -> coordinator/buildTools filters by name
+  -> path guard wraps filesystem-facing read/list/search
+  -> hooked_tool.go PreToolUse remains final audit/deny gate
 ```
 
-用途：
+规则：
 
-- M1 只允许 `IsReadOnly=true` 工具。
-- M3 teammate read-only runtime 用显式 capability。
-- M4 permission bridge 使用 `IsDestructive` 决定 UI 强提示。
+- 无论 delegate prompt 如何要求，M1 runner 只能拿到 allow-list 内工具。
+- allow-list 之外的工具不能进入模型 tool schema，而不是等 tool call 发生后再拒绝。
+- `sourcegraph` / `fetch` 这类“看似只读但有网络面”的工具默认不进入 allow-list。
+- M3 teammate read-only runtime 继续复用同一 allow-list 和 path guard。
+- M4 permission bridge 可以在此基础上引入更细的 tool metadata，但它是 M4+ 迁移项，不是 PR-1 阻塞项。
 
-迁移策略：
+后续若引入 adapter，必须满足：
 
-- 已有工具先通过 registry metadata 标注 read-only/destructive。
-- 无 metadata 的工具默认不可给 delegate/member 使用。
-- 现有 `hooked_tool.go` 的 PreToolUse 继续保留，作为执行前 audit/deny 的最后一道门。
-- 后续再逐步把工具内部 permission 逻辑抽到 adapter。
+- 不替代 `hooked_tool.go`；hook 仍是执行前最终 audit/deny。
+- 与现有 `AllowedTools` 配置兼容，不能出现两套互相绕过的工具过滤逻辑。
+- adapter metadata 缺失的工具默认 deny 给 delegate/member。
 
 ## Bash 安全
 
-M1-M3 不给 teammate bash 权限。M5 如要允许 patch verification bash，必须先覆盖：
+M1-M3.5 不给 teammate bash 权限。M5 如要允许 patch verification bash，必须先覆盖：
 
 - destructive command detection。
 - command substitution detection。
