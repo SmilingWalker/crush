@@ -344,7 +344,7 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		q.renderPreviewLayout(rc, currQ, innerWidth, height)
 	} else {
 		// Standard single-column layout
-		q.list.SetSize(innerWidth, height-10)
+		q.list.SetSize(innerWidth, max(1, height-10))
 		listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
 		rc.AddPart(listView)
 	}
@@ -370,14 +370,14 @@ func (q *Questions) renderPreviewLayout(rc *RenderContext, currQ questions.Quest
 	rightWidth := innerWidth - previewLeftWidth - 2 // 2 for gap
 	if rightWidth < 20 {
 		// Not enough space, fall back to single column
-		q.list.SetSize(innerWidth, height-10)
+		q.list.SetSize(innerWidth, max(1, height-10))
 		listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
 		rc.AddPart(listView)
 		return
 	}
 
 	// Render left panel: option list at constrained width
-	q.list.SetSize(previewLeftWidth, height-10)
+	q.list.SetSize(previewLeftWidth, max(1, height-10))
 	leftView := q.list.Render()
 
 	// Get preview content for focused option
@@ -387,7 +387,7 @@ func (q *Questions) renderPreviewLayout(rc *RenderContext, currQ questions.Quest
 	}
 
 	// Render right panel: preview box
-	maxLines := height - 6 // account for nav bar, question text, borders
+	maxLines := max(1, height-6) // account for nav bar, question text, borders
 	rightView := renderPreviewBox(previewBoxConfig{
 		content:  previewContent,
 		width:    rightWidth,

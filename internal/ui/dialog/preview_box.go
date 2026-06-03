@@ -57,10 +57,14 @@ func renderPreviewBox(cfg previewBoxConfig) string {
 			Render("No preview available")
 	} else {
 		renderer := common.MarkdownRenderer(cfg.styles, innerWidth)
-		var err error
-		rendered, err = renderer.Render(cfg.content)
-		if err != nil {
-			rendered = cfg.content // fallback to raw text
+		if renderer != nil {
+			var err error
+			rendered, err = renderer.Render(cfg.content)
+			if err != nil {
+				rendered = cfg.content // fallback to raw text
+			}
+		} else {
+			rendered = cfg.content // fallback if renderer is nil
 		}
 	}
 
