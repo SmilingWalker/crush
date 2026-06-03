@@ -35,7 +35,7 @@ type Questions struct {
 	otherTexts    map[int]string       // map[questionIdx]otherText
 	isInTextInput bool
 	textInput     textinput.Model
-	focusedIdx    int // P2: index of the option being previewed
+	focusedIdx    int // index of the option being previewed
 
 	// Keyboard
 	keyMap questionsKeyMap
@@ -50,7 +50,6 @@ type questionsKeyMap struct {
 	Down     key.Binding
 	Next     key.Binding
 	Previous key.Binding
-	Select   key.Binding
 	Submit   key.Binding
 	Close    key.Binding
 }
@@ -84,10 +83,6 @@ func NewQuestionsDialog(com *common.Common, req questions.QuestionsRequest) *Que
 		Next: key.NewBinding(
 			key.WithKeys("right", "tab"),
 			key.WithHelp("right", "next question"),
-		),
-		Select: key.NewBinding(
-			key.WithKeys(" "),
-			key.WithHelp("space", "toggle"),
 		),
 		Submit: key.NewBinding(
 			key.WithKeys("enter"),
@@ -155,7 +150,7 @@ func (q *Questions) HandleMsg(msg tea.Msg) Action {
 				q.list.SelectPrev()
 			}
 			q.list.ScrollToSelected()
-		q.focusedIdx = q.list.Selected()
+			q.focusedIdx = q.list.Selected()
 		case key.Matches(msg, q.keyMap.Down):
 			q.list.Focus()
 			if q.list.IsSelectedLast() {
@@ -164,7 +159,7 @@ func (q *Questions) HandleMsg(msg tea.Msg) Action {
 				q.list.SelectNext()
 			}
 			q.list.ScrollToSelected()
-		q.focusedIdx = q.list.Selected()
+			q.focusedIdx = q.list.Selected()
 		case key.Matches(msg, q.keyMap.Previous):
 			if q.currQuestion > 0 {
 				q.currQuestion--
@@ -175,8 +170,6 @@ func (q *Questions) HandleMsg(msg tea.Msg) Action {
 				q.currQuestion++
 				q.initList()
 			}
-		case key.Matches(msg, q.keyMap.Select):
-			return q.handleToggle()
 		case key.Matches(msg, q.keyMap.Submit):
 			return q.handleSubmit()
 		case key.Matches(msg, q.keyMap.Close):
@@ -225,59 +218,64 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 		}
 		return nil
 	default:
-		// Delegate all other keys to the textinput component
-		q.textInput.Update(msg)
+		// Delegate all other keys to the textinput component.
+		// CRITICAL: textinput.Update returns a new model (value type).
+		// We must capture the return value, otherwise key events are lost.
+		var cmd tea.Cmd
+		q.textInput, cmd = q.textInput.Update(msg)
+		if cmd != nil {
+			return ActionCmd{Cmd: cmd}
+		}
 		return nil
 	}
 }
 
-// handleToggle processes space key: toggle option in multi-select, or enter Other input.
-func (q *Questions) handleToggle() Action {
+// handleSubmit processes enter key: the universal action.
+//   - Submit item → submit all answers
+//   - Other item → enter text input mode
+//   - Single-select: select focused option + auto-advance/submit
+//   - Multi-select: toggle focused option (use Submit item to finalize)
+func (q *Questions) handleSubmit() Action {
 	currQ := q.req.Questions[q.currQuestion]
-	idx := q.list.Selected()
-	if idx < 0 {
+
+	// Identify the focused item via the list
+	item := q.list.SelectedItem()
+	if item == nil {
+		return nil
+	}
+	optItem, ok := item.(*questionOptionsListItem)
+	if !ok {
 		return nil
 	}
 
-	// Check if "Other" was selected
-	if idx == len(currQ.Options) {
+	// Submit item: submit all answers
+	if optItem.isSubmit {
+		return q.buildSubmitAction()
+	}
+
+	// Other item: enter text input mode
+	if optItem.isOther {
 		q.isInTextInput = true
-		q.textInput.SetValue(""); q.textInput.Focus()
+		q.textInput.SetValue("")
+		q.textInput.Focus()
 		return nil
 	}
 
 	if currQ.MultiSelect {
-		// Multi select: toggle the option
-		q.selectedOpts[q.currQuestion][idx] = !q.selectedOpts[q.currQuestion][idx]
+		// Multi-select: toggle the option checkbox
+		q.selectedOpts[q.currQuestion][optItem.index] = !q.selectedOpts[q.currQuestion][optItem.index]
 		q.refreshList()
-	}
-	// Single select: space does nothing (use Enter to confirm)
-	return nil
-}
-
-// handleSubmit processes enter key: confirm selection and advance or submit.
-func (q *Questions) handleSubmit() Action {
-	currQ := q.req.Questions[q.currQuestion]
-	idx := q.list.Selected()
-
-	if !currQ.MultiSelect {
-		// Single select: select the focused option and advance
-		if idx >= 0 && idx < len(currQ.Options) {
-			q.selectedOpts[q.currQuestion] = map[int]bool{idx: true}
-			delete(q.otherTexts, q.currQuestion)
-			q.refreshList()
-		}
-		// Advance to next question or submit
+	} else {
+		// Single-select: select the focused option and advance
+		q.selectedOpts[q.currQuestion] = map[int]bool{optItem.index: true}
+		delete(q.otherTexts, q.currQuestion)
+		q.refreshList()
 		if q.currQuestion < len(q.req.Questions)-1 {
 			q.currQuestion++
 			q.initList()
 		} else {
 			return q.buildSubmitAction()
 		}
-	} else {
-		// Multi select: Enter always submits all answers
-		// Use Tab/←/→ to navigate between questions in multi-select mode
-		return q.buildSubmitAction()
 	}
 	return nil
 }
@@ -348,20 +346,19 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	rc.AddPart(questionText)
 
 	// Content area
-		// Content area
-		if q.isInTextInput {
-			// Text input mode: use textinput.Model's built-in rendering
-			q.textInput.Focus()
-			rc.AddPart(q.textInput.View())
-		} else if currQ.HasPreview() && area.Dx() >= previewMinTotalWidth {
-			// P2: Side-by-side preview mode
-			q.renderPreviewLayout(rc, currQ, innerWidth, height)
-		} else {
-			// Standard single-column layout
-			q.list.SetSize(innerWidth, max(1, height-10))
-			listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
-			rc.AddPart(listView)
-		}
+	if q.isInTextInput {
+		// Text input mode: use textinput.Model's built-in rendering
+		q.textInput.Focus()
+		rc.AddPart(q.textInput.View())
+	} else if currQ.HasPreview() && area.Dx() >= previewMinTotalWidth {
+		// P2: Side-by-side preview mode
+		q.renderPreviewLayout(rc, currQ, innerWidth, height)
+	} else {
+		// Standard single-column layout
+		q.list.SetSize(innerWidth, max(1, height-10))
+		listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
+		rc.AddPart(listView)
+	}
 
 	// Help
 	rc.Help = q.help.View(q)
@@ -483,10 +480,6 @@ func (q *Questions) ShortHelp() []key.Binding {
 		q.keyMap.Up,
 		q.keyMap.Down,
 		q.keyMap.Submit,
-	}
-	// Show space toggle help for multi-select questions
-	if len(q.req.Questions) > 0 && q.req.Questions[q.currQuestion].MultiSelect {
-		h = append(h, q.keyMap.Select)
 	}
 	if len(q.req.Questions) > 1 {
 		h = append(h, q.keyMap.Previous, q.keyMap.Next)
