@@ -236,11 +236,9 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 		q.textInput.Blur()
 		// Auto-advance if single select
 		if !q.req.Questions[q.currQuestion].MultiSelect {
-			if q.currQuestion < len(q.req.Questions)-1 {
-				q.currQuestion++
+			q.currQuestion++
+			if !q.isOnSubmitTab() {
 				q.initList()
-			} else {
-				return q.buildSubmitAction()
 			}
 		}
 		return nil
@@ -297,11 +295,10 @@ func (q *Questions) handleSubmit() Action {
 		q.selectedOpts[q.currQuestion] = map[int]bool{optItem.index: true}
 		delete(q.otherTexts, q.currQuestion)
 		q.refreshList()
-		if q.currQuestion < len(q.req.Questions)-1 {
-			q.currQuestion++
+		// Advance to next question or Submit tab (never auto-submit)
+		q.currQuestion++
+		if !q.isOnSubmitTab() {
 			q.initList()
-		} else {
-			return q.buildSubmitAction()
 		}
 	}
 	return nil
@@ -506,10 +503,23 @@ func (q *Questions) renderNavigationBar(innerWidth int) string {
 		}
 	}
 
-	// Submit tab
-	submitText := " ✓ Submit "
+	// Submit tab — visual state depends on whether all questions are answered
+	allAnswered := true
+	for i := range q.req.Questions {
+		if !q.isQuestionAnswered(i) {
+			allAnswered = false
+			break
+		}
+	}
+	submitIndicator := "…"
+	if allAnswered {
+		submitIndicator = "✓"
+	}
+	submitText := fmt.Sprintf(" %s Submit ", submitIndicator)
 	if q.isOnSubmitTab() {
 		parts = append(parts, t.Dialog.SelectedItem.Bold(true).Render(submitText))
+	} else if allAnswered {
+		parts = append(parts, t.Dialog.SelectedItem.Render(submitText))
 	} else {
 		parts = append(parts, t.Dialog.NormalItem.Render(submitText))
 	}
@@ -574,7 +584,21 @@ func (q *Questions) renderSubmitView(innerWidth int) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, t.Dialog.SelectedItem.Padding(0, 2).Render("Press Enter to submit all answers"))
+		// Check if all questions are answered
+		allAnswered := true
+		for i := range q.req.Questions {
+			if !q.isQuestionAnswered(i) {
+				allAnswered = false
+				break
+			}
+		}
+
+	// Submit prompt — styled as a button
+	if allAnswered {
+		lines = append(lines, t.Dialog.SelectedItem.Bold(true).Padding(0, 2).Render("  ► Submit all answers  "))
+	} else {
+		lines = append(lines, t.Dialog.SecondaryText.Padding(0, 2).Render("  … Submit (some questions unanswered)  "))
+	}
 
 	return strings.Join(lines, "\n")
 }
