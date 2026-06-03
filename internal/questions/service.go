@@ -40,6 +40,7 @@ type Answer struct {
 	QuestionText string `json:"question"`
 	Selected     string `json:"selected"`
 	IsOther      bool   `json:"is_other"`
+	Annotation   string `json:"annotation,omitempty"`
 }
 
 // QuestionsRequest represents a request to ask a set of Questions.
