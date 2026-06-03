@@ -148,6 +148,7 @@ func (q *Questions) refreshList() {
 	q.list.SetQuestion(
 		q.req.Questions[q.currQuestion],
 		q.selectedOpts[q.currQuestion],
+		q.otherTexts[q.currQuestion],
 	)
 }
 
@@ -524,7 +525,7 @@ func (q *Questions) renderNavigationBar(innerWidth int) string {
 }
 
 // renderSubmitView renders the content when the Submit tab is active.
-// Shows a brief summary of answers and a prompt to submit.
+// Shows each question with its selected answer.
 func (q *Questions) renderSubmitView(innerWidth int) string {
 	t := q.com.Styles
 	var lines []string
@@ -539,7 +540,32 @@ func (q *Questions) renderSubmitView(innerWidth int) string {
 		if answered {
 			status = "☑"
 		}
+
+		// Resolve the actual answer text
+		answerText := ""
+		if otherText, ok := q.otherTexts[i]; ok && otherText != "" {
+			answerText = otherText
+		} else if quest.MultiSelect {
+			var selected []string
+			for optIdx, sel := range q.selectedOpts[i] {
+				if sel && optIdx < len(quest.Options) {
+					selected = append(selected, quest.Options[optIdx].Label)
+				}
+			}
+			answerText = strings.Join(selected, ", ")
+		} else {
+			for optIdx, sel := range q.selectedOpts[i] {
+				if sel && optIdx < len(quest.Options) {
+					answerText = quest.Options[optIdx].Label
+					break
+				}
+			}
+		}
+
 		line := fmt.Sprintf("  %s %s", status, header)
+		if answerText != "" {
+			line = fmt.Sprintf("  %s %s → %s", status, header, answerText)
+		}
 		if answered {
 			lines = append(lines, t.Dialog.NormalItem.Render(line))
 		} else {

@@ -27,7 +27,9 @@ func newQuestionOptionsList(sty *styles.Styles) *questionOptionsList {
 }
 
 // SetQuestion sets the question's options in the list.
-func (l *questionOptionsList) SetQuestion(q questions.Question, selOpts map[int]bool) {
+// otherText is the user's custom answer for "Other"; when non-empty the Other
+// item shows the entered text as its label with a check indicator.
+func (l *questionOptionsList) SetQuestion(q questions.Question, selOpts map[int]bool, otherText string) {
 	var items []list.Item
 	for i, opt := range q.Options {
 		items = append(items, &questionOptionsListItem{
@@ -39,12 +41,20 @@ func (l *questionOptionsList) SetQuestion(q questions.Question, selOpts map[int]
 			isMultiSelect: q.MultiSelect,
 		})
 	}
-	// Add "Other..." option
+	// Add "Other..." option — if user already entered text, show it as label
+	otherLabel := "Other..."
+	otherDesc := "Provide a custom answer"
+	otherSelected := selOpts[len(q.Options)]
+	if otherText != "" {
+		otherLabel = otherText
+		otherDesc = ""
+		otherSelected = true
+	}
 	items = append(items, &questionOptionsListItem{
 		Versioned:    list.NewVersioned(),
 		parent:       l,
-		opt:          questions.Option{Label: "Other...", Description: "Provide a custom answer"},
-		selected:     selOpts[len(q.Options)], // Other is at index len(q.Options)
+		opt:          questions.Option{Label: otherLabel, Description: otherDesc},
+		selected:     otherSelected,
 		index:        len(q.Options),
 		isOther:      true,
 		isMultiSelect: q.MultiSelect,
