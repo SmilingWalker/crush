@@ -112,7 +112,8 @@ func (i *questionOptionsListItem) SetSelected(selected bool) {
 func (i *questionOptionsListItem) Render(width int) string {
 	t := i.parent.t
 
-	// Indicator: checkbox for multi-select, radio for single-select
+	// Indicator: plain text characters so outer style handles all highlighting.
+	// Pre-styled t.Radio.On/Off causes double-ANSI conflicts with style.Render().
 	var indicator string
 	if i.isMultiSelect {
 		if i.selected {
@@ -122,9 +123,9 @@ func (i *questionOptionsListItem) Render(width int) string {
 		}
 	} else {
 		if i.selected {
-			indicator = t.Radio.On.Padding(0, 1, 0, 0).Render()
+			indicator = "◉ "
 		} else {
-			indicator = t.Radio.Off.Padding(0, 1, 0, 0).Render()
+			indicator = "○ "
 		}
 	}
 
