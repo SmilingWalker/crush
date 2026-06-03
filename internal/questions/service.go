@@ -14,6 +14,7 @@ import (
 type Option struct {
 	Label       string `json:"label"`
 	Description string `json:"description"`
+	Preview     string `json:"preview,omitempty"`
 }
 
 // Question represents a single question to be asked.
@@ -22,6 +23,16 @@ type Question struct {
 	Header      string   `json:"header"`
 	Options     []Option `json:"options"`
 	MultiSelect bool     `json:"multi_select"`
+}
+
+// HasPreview returns true if any option in this question has preview content.
+func (q Question) HasPreview() bool {
+	for _, opt := range q.Options {
+		if opt.Preview != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Answer represents a user's response to a Question.
