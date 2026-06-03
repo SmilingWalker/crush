@@ -31,19 +31,21 @@ func (l *questionOptionsList) SetQuestion(q questions.Question, selOpts map[int]
 	var items []list.Item
 	for i, opt := range q.Options {
 		items = append(items, &questionOptionsListItem{
-			parent:   l,
-			opt:      opt,
-			selected: selOpts[i],
-			index:    i,
+			Versioned: list.NewVersioned(),
+			parent:    l,
+			opt:       opt,
+			selected:  selOpts[i],
+			index:     i,
 		})
 	}
 	// Add "Other..." option
 	items = append(items, &questionOptionsListItem{
-		parent:   l,
-		opt:      questions.Option{Label: "Other...", Description: "Provide a custom answer"},
-		selected: selOpts[len(q.Options)], // Other is at index len(q.Options)
-		index:    len(q.Options),
-		isOther:  true,
+		Versioned: list.NewVersioned(),
+		parent:    l,
+		opt:       questions.Option{Label: "Other...", Description: "Provide a custom answer"},
+		selected:  selOpts[len(q.Options)], // Other is at index len(q.Options)
+		index:     len(q.Options),
+		isOther:   true,
 	})
 	l.SetItems(items...)
 }
