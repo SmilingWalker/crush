@@ -103,9 +103,9 @@ func (i *questionOptionsListItem) Render(width int) string {
 	var indicator string
 	if i.isMultiSelect {
 		if i.selected {
-			indicator = "☑ "
+			indicator = "[x] "
 		} else {
-			indicator = "☐ "
+			indicator = "[ ] "
 		}
 	} else {
 		if i.selected {

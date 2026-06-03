@@ -484,6 +484,10 @@ func (q *Questions) ShortHelp() []key.Binding {
 		q.keyMap.Down,
 		q.keyMap.Submit,
 	}
+	// Show space toggle help for multi-select questions
+	if len(q.req.Questions) > 0 && q.req.Questions[q.currQuestion].MultiSelect {
+		h = append(h, q.keyMap.Select)
+	}
 	if len(q.req.Questions) > 1 {
 		h = append(h, q.keyMap.Previous, q.keyMap.Next)
 	}
