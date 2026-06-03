@@ -581,23 +581,27 @@ func (q *Questions) renderSubmitView(innerWidth int) string {
 		} else {
 			lines = append(lines, t.Dialog.SecondaryText.Render(line))
 		}
+		lines = append(lines, "") // spacing between items
 	}
 
-	lines = append(lines, "")
-		// Check if all questions are answered
-		allAnswered := true
-		for i := range q.req.Questions {
-			if !q.isQuestionAnswered(i) {
-				allAnswered = false
-				break
-			}
+	// Check if all questions are answered
+	allAnswered := true
+	for i := range q.req.Questions {
+		if !q.isQuestionAnswered(i) {
+			allAnswered = false
+			break
 		}
+	}
 
-	// Submit prompt — styled as a button
+	// Separator line
+	sep := t.Dialog.SecondaryText.Render(strings.Repeat("─", max(0, innerWidth-4)))
+	lines = append(lines, sep, "")
+
+	// Submit prompt — styled as a button with vertical padding
 	if allAnswered {
-		lines = append(lines, t.Dialog.SelectedItem.Bold(true).Padding(0, 2).Render("  ► Submit all answers  "))
+		lines = append(lines, t.Dialog.SelectedItem.Bold(true).Padding(1, 2).Render("  ► Submit all answers  "))
 	} else {
-		lines = append(lines, t.Dialog.SecondaryText.Padding(0, 2).Render("  … Submit (some questions unanswered)  "))
+		lines = append(lines, t.Dialog.SecondaryText.Padding(1, 2).Render("  … Submit (some questions unanswered)  "))
 	}
 
 	return strings.Join(lines, "\n")
