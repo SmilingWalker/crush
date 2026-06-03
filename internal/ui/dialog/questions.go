@@ -8,8 +8,10 @@ import (
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/ui/common"
+	"github.com/charmbracelet/x/ansi"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
@@ -31,6 +33,7 @@ type Questions struct {
 	otherTexts    map[int]string       // map[questionIdx]otherText
 	isInTextInput bool
 	textInput     string
+	focusedIdx    int // P2: index of the option being previewed
 
 	// Keyboard
 	keyMap questionsKeyMap
@@ -111,6 +114,14 @@ func (q *Questions) initList() {
 	if q.selectedOpts[q.currQuestion] == nil {
 		q.selectedOpts[q.currQuestion] = make(map[int]bool)
 	}
+	// Reset focused index: prefer previously selected option, else 0
+	q.focusedIdx = 0
+	for optIdx, sel := range q.selectedOpts[q.currQuestion] {
+		if sel {
+			q.focusedIdx = optIdx
+			break
+		}
+	}
 	q.refreshList()
 	q.list.SelectFirst()
 }
@@ -141,6 +152,7 @@ func (q *Questions) HandleMsg(msg tea.Msg) Action {
 				q.list.SelectPrev()
 			}
 			q.list.ScrollToSelected()
+		q.focusedIdx = q.list.Selected()
 		case key.Matches(msg, q.keyMap.Down):
 			q.list.Focus()
 			if q.list.IsSelectedLast() {
@@ -149,6 +161,7 @@ func (q *Questions) HandleMsg(msg tea.Msg) Action {
 				q.list.SelectNext()
 			}
 			q.list.ScrollToSelected()
+		q.focusedIdx = q.list.Selected()
 		case key.Matches(msg, q.keyMap.Previous):
 			if q.currQuestion > 0 {
 				q.currQuestion--
@@ -305,7 +318,6 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	height := max(0, min(defaultDialogHeight, area.Dy()-t.Dialog.View.GetVerticalBorderSize()))
 	innerWidth := width - t.Dialog.View.GetHorizontalFrameSize()
 
-	q.list.SetSize(innerWidth, height-10)
 	q.help.SetWidth(innerWidth)
 
 	rc := NewRenderContext(t, width)
@@ -321,13 +333,18 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	questionText := t.Dialog.TitleAccent.Italic(true).Padding(1, 2).Render(currQ.Question)
 	rc.AddPart(questionText)
 
-	// If in text input mode, show text input
+	// Content area
 	if q.isInTextInput {
+		// Text input mode
 		prompt := t.Dialog.InputPrompt.Render("Your answer: ")
 		input := t.Dialog.SelectedItem.Render(q.textInput + "|")
 		rc.AddPart(prompt + input)
+	} else if currQ.HasPreview() && area.Dx() >= previewMinTotalWidth {
+		// P2: Side-by-side preview mode
+		q.renderPreviewLayout(rc, currQ, innerWidth, height)
 	} else {
-		// Options list
+		// Standard single-column layout
+		q.list.SetSize(innerWidth, height-10)
 		listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
 		rc.AddPart(listView)
 	}
@@ -339,6 +356,78 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	DrawCenterCursor(scr, area, view, nil)
 
 	return nil
+}
+
+const (
+	previewLeftWidth    = 30
+	previewMinTotalWidth = 60
+)
+
+// renderPreviewLayout renders the side-by-side options + preview layout.
+func (q *Questions) renderPreviewLayout(rc *RenderContext, currQ questions.Question, innerWidth, height int) {
+	t := q.com.Styles
+
+	rightWidth := innerWidth - previewLeftWidth - 2 // 2 for gap
+	if rightWidth < 20 {
+		// Not enough space, fall back to single column
+		q.list.SetSize(innerWidth, height-10)
+		listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
+		rc.AddPart(listView)
+		return
+	}
+
+	// Render left panel: option list at constrained width
+	q.list.SetSize(previewLeftWidth, height-10)
+	leftView := q.list.Render()
+
+	// Get preview content for focused option
+	previewContent := ""
+	if q.focusedIdx >= 0 && q.focusedIdx < len(currQ.Options) {
+		previewContent = currQ.Options[q.focusedIdx].Preview
+	}
+
+	// Render right panel: preview box
+	maxLines := height - 6 // account for nav bar, question text, borders
+	rightView := renderPreviewBox(previewBoxConfig{
+		content:  previewContent,
+		width:    rightWidth,
+		maxLines: maxLines,
+		minWidth: 20,
+		styles:   t,
+	})
+
+	// Join side-by-side
+	rc.AddPart(joinSideBySide(leftView, rightView, previewLeftWidth, innerWidth))
+}
+
+// joinSideBySide renders two views side by side with a gap.
+func joinSideBySide(left, right string, leftWidth, totalWidth int) string {
+	leftLines := strings.Split(left, "\n")
+	rightLines := strings.Split(right, "\n")
+
+	maxLineCount := max(len(leftLines), len(rightLines))
+	// Pad shorter side
+	for len(leftLines) < maxLineCount {
+		leftLines = append(leftLines, "")
+	}
+	for len(rightLines) < maxLineCount {
+		rightLines = append(rightLines, "")
+	}
+
+	gap := "  "
+	var result []string
+	for i := 0; i < maxLineCount; i++ {
+		// Left line padded to leftWidth
+		leftPart := leftLines[i]
+		leftPartWidth := lipgloss.Width(leftPart)
+		if leftPartWidth < leftWidth {
+			leftPart += strings.Repeat(" ", leftWidth-leftPartWidth)
+		} else if leftPartWidth > leftWidth {
+			leftPart = ansi.Truncate(leftPart, leftWidth, "")
+		}
+		result = append(result, leftPart+gap+rightLines[i])
+	}
+	return strings.Join(result, "\n")
 }
 
 // renderNavigationBar renders the question tabs.
