@@ -83,8 +83,8 @@ func NewQuestionsDialog(com *common.Common, req questions.QuestionsRequest) *Que
 			key.WithHelp("right", "next question"),
 		),
 		Select: key.NewBinding(
-			key.WithKeys("enter", " "),
-			key.WithHelp("enter", "select"),
+			key.WithKeys(" "),
+			key.WithHelp("space", "toggle"),
 		),
 		Submit: key.NewBinding(
 			key.WithKeys("enter"),
@@ -173,9 +173,9 @@ func (q *Questions) HandleMsg(msg tea.Msg) Action {
 				q.initList()
 			}
 		case key.Matches(msg, q.keyMap.Select):
-			return q.handleSelect()
+			return q.handleToggle()
 		case key.Matches(msg, q.keyMap.Submit):
-			return q.buildSubmitAction()
+			return q.handleSubmit()
 		case key.Matches(msg, q.keyMap.Close):
 			slog.Info("QuestionsDialog rejected by user")
 			return ActionQuestionsResponse{
@@ -232,8 +232,8 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 	}
 }
 
-// handleSelect processes the select key for the current option.
-func (q *Questions) handleSelect() Action {
+// handleToggle processes space key: toggle option in multi-select, or enter Other input.
+func (q *Questions) handleToggle() Action {
 	currQ := q.req.Questions[q.currQuestion]
 	idx := q.list.Selected()
 	if idx < 0 {
@@ -247,13 +247,28 @@ func (q *Questions) handleSelect() Action {
 		return nil
 	}
 
-	if !currQ.MultiSelect {
-		// Single select: clear previous selection
-		q.selectedOpts[q.currQuestion] = map[int]bool{idx: true}
-		delete(q.otherTexts, q.currQuestion)
+	if currQ.MultiSelect {
+		// Multi select: toggle the option
+		q.selectedOpts[q.currQuestion][idx] = !q.selectedOpts[q.currQuestion][idx]
 		q.refreshList()
+	}
+	// Single select: space does nothing (use Enter to confirm)
+	return nil
+}
 
-		// Auto-advance to next question
+// handleSubmit processes enter key: confirm selection and advance or submit.
+func (q *Questions) handleSubmit() Action {
+	currQ := q.req.Questions[q.currQuestion]
+	idx := q.list.Selected()
+
+	if !currQ.MultiSelect {
+		// Single select: select the focused option and advance
+		if idx >= 0 && idx < len(currQ.Options) {
+			q.selectedOpts[q.currQuestion] = map[int]bool{idx: true}
+			delete(q.otherTexts, q.currQuestion)
+			q.refreshList()
+		}
+		// Advance to next question or submit
 		if q.currQuestion < len(q.req.Questions)-1 {
 			q.currQuestion++
 			q.initList()
@@ -261,9 +276,13 @@ func (q *Questions) handleSelect() Action {
 			return q.buildSubmitAction()
 		}
 	} else {
-		// Multi select: toggle
-		q.selectedOpts[q.currQuestion][idx] = !q.selectedOpts[q.currQuestion][idx]
-		q.refreshList()
+		// Multi select: advance to next question or submit all
+		if q.currQuestion < len(q.req.Questions)-1 {
+			q.currQuestion++
+			q.initList()
+		} else {
+			return q.buildSubmitAction()
+		}
 	}
 	return nil
 }
@@ -458,7 +477,7 @@ func (q *Questions) ShortHelp() []key.Binding {
 	h := []key.Binding{
 		q.keyMap.Up,
 		q.keyMap.Down,
-		q.keyMap.Select,
+		q.keyMap.Submit,
 	}
 	if len(q.req.Questions) > 1 {
 		h = append(h, q.keyMap.Previous, q.keyMap.Next)
