@@ -30,9 +30,9 @@ type Questions struct {
 	req questions.QuestionsRequest
 
 	// State
-	currQuestion  int
-	selectedOpts  map[int]map[int]bool // map[questionIdx]map[optionIdx]bool
-	otherTexts    map[int]string       // map[questionIdx]otherText
+	currQuestion  int                    // 0..len(questions)-1 = question tab; len(questions) = Submit tab
+	selectedOpts  map[int]map[int]bool   // map[questionIdx]map[optionIdx]bool
+	otherTexts    map[int]string         // map[questionIdx]otherText
 	isInTextInput bool
 	textInput     textinput.Model
 	focusedIdx    int // index of the option being previewed
@@ -78,11 +78,11 @@ func NewQuestionsDialog(com *common.Common, req questions.QuestionsRequest) *Que
 		),
 		Previous: key.NewBinding(
 			key.WithKeys("left", "shift+tab"),
-			key.WithHelp("left", "prev question"),
+			key.WithHelp("←", "prev"),
 		),
 		Next: key.NewBinding(
 			key.WithKeys("right", "tab"),
-			key.WithHelp("right", "next question"),
+			key.WithHelp("→", "next"),
 		),
 		Submit: key.NewBinding(
 			key.WithKeys("enter"),
@@ -105,14 +105,31 @@ func (q *Questions) ID() string {
 	return QuestionsID
 }
 
+// isOnSubmitTab returns true if the Submit tab is active.
+func (q *Questions) isOnSubmitTab() bool {
+	return q.currQuestion >= len(q.req.Questions)
+}
+
+// isQuestionAnswered returns true if the question at the given index has a real answer.
+func (q *Questions) isQuestionAnswered(idx int) bool {
+	if text, ok := q.otherTexts[idx]; ok && text != "" {
+		return true
+	}
+	for _, sel := range q.selectedOpts[idx] {
+		if sel {
+			return true
+		}
+	}
+	return false
+}
+
 func (q *Questions) initList() {
-	if len(q.req.Questions) == 0 {
+	if q.isOnSubmitTab() || len(q.req.Questions) == 0 {
 		return
 	}
 	if q.selectedOpts[q.currQuestion] == nil {
 		q.selectedOpts[q.currQuestion] = make(map[int]bool)
 	}
-	// Reset focused index: prefer previously selected option, else 0
 	q.focusedIdx = 0
 	for optIdx, sel := range q.selectedOpts[q.currQuestion] {
 		if sel {
@@ -125,6 +142,9 @@ func (q *Questions) initList() {
 }
 
 func (q *Questions) refreshList() {
+	if q.isOnSubmitTab() {
+		return
+	}
 	q.list.SetQuestion(
 		q.req.Questions[q.currQuestion],
 		q.selectedOpts[q.currQuestion],
@@ -143,32 +163,38 @@ func (q *Questions) HandleMsg(msg tea.Msg) Action {
 		// Normal option navigation
 		switch {
 		case key.Matches(msg, q.keyMap.Up):
-			q.list.Focus()
-			if q.list.IsSelectedFirst() {
-				q.list.SelectLast()
-			} else {
-				q.list.SelectPrev()
+			if !q.isOnSubmitTab() {
+				q.list.Focus()
+				if q.list.IsSelectedFirst() {
+					q.list.SelectLast()
+				} else {
+					q.list.SelectPrev()
+				}
+				q.list.ScrollToSelected()
+				q.focusedIdx = q.list.Selected()
 			}
-			q.list.ScrollToSelected()
-			q.focusedIdx = q.list.Selected()
 		case key.Matches(msg, q.keyMap.Down):
-			q.list.Focus()
-			if q.list.IsSelectedLast() {
-				q.list.SelectFirst()
-			} else {
-				q.list.SelectNext()
+			if !q.isOnSubmitTab() {
+				q.list.Focus()
+				if q.list.IsSelectedLast() {
+					q.list.SelectFirst()
+				} else {
+					q.list.SelectNext()
+				}
+				q.list.ScrollToSelected()
+				q.focusedIdx = q.list.Selected()
 			}
-			q.list.ScrollToSelected()
-			q.focusedIdx = q.list.Selected()
 		case key.Matches(msg, q.keyMap.Previous):
 			if q.currQuestion > 0 {
 				q.currQuestion--
 				q.initList()
 			}
 		case key.Matches(msg, q.keyMap.Next):
-			if q.currQuestion < len(q.req.Questions)-1 {
+			if q.currQuestion < len(q.req.Questions) {
 				q.currQuestion++
-				q.initList()
+				if !q.isOnSubmitTab() {
+					q.initList()
+				}
 			}
 		case key.Matches(msg, q.keyMap.Submit):
 			return q.handleSubmit()
@@ -200,7 +226,7 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 		text := strings.TrimSpace(q.textInput.Value())
 		if text != "" {
 			currQ := q.req.Questions[q.currQuestion]
-			otherIdx := len(currQ.Options) // Other is the last item
+			otherIdx := len(currQ.Options)
 			q.selectedOpts[q.currQuestion] = map[int]bool{otherIdx: true}
 			q.otherTexts[q.currQuestion] = text
 		}
@@ -231,11 +257,16 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 }
 
 // handleSubmit processes enter key: the universal action.
-//   - Submit item → submit all answers
+//   - Submit tab → submit all answers
 //   - Other item → enter text input mode
 //   - Single-select: select focused option + auto-advance/submit
-//   - Multi-select: toggle focused option (use Submit item to finalize)
+//   - Multi-select: toggle focused option
 func (q *Questions) handleSubmit() Action {
+	// Submit tab: submit all answers
+	if q.isOnSubmitTab() {
+		return q.buildSubmitAction()
+	}
+
 	currQ := q.req.Questions[q.currQuestion]
 
 	// Identify the focused item via the list
@@ -246,11 +277,6 @@ func (q *Questions) handleSubmit() Action {
 	optItem, ok := item.(*questionOptionsListItem)
 	if !ok {
 		return nil
-	}
-
-	// Submit item: submit all answers
-	if optItem.isSubmit {
-		return q.buildSubmitAction()
 	}
 
 	// Other item: enter text input mode
@@ -323,7 +349,6 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		return nil
 	}
 
-	currQ := q.req.Questions[q.currQuestion]
 	t := q.com.Styles
 
 	width := max(0, min(defaultDialogMaxWidth, area.Dx()-t.Dialog.View.GetHorizontalBorderSize()))
@@ -337,27 +362,31 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	// Title
 	rc.Title = "Question"
 
-	// Question navigation bar (tabs)
-	navBar := q.renderNavigationBar()
+	// Navigation bar with question tabs + Submit tab
+	navBar := q.renderNavigationBar(innerWidth)
 	rc.AddPart(navBar)
 
-	// Question text
-	questionText := t.Dialog.TitleAccent.Italic(true).Padding(1, 2).Render(currQ.Question)
-	rc.AddPart(questionText)
-
-	// Content area
-	if q.isInTextInput {
-		// Text input mode: use textinput.Model's built-in rendering
-		q.textInput.Focus()
-		rc.AddPart(q.textInput.View())
-	} else if currQ.HasPreview() && area.Dx() >= previewMinTotalWidth {
-		// P2: Side-by-side preview mode
-		q.renderPreviewLayout(rc, currQ, innerWidth, height)
+	if q.isOnSubmitTab() {
+		// Submit tab: show answer summary
+		rc.AddPart(q.renderSubmitView(innerWidth))
 	} else {
-		// Standard single-column layout
-		q.list.SetSize(innerWidth, max(1, height-10))
-		listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
-		rc.AddPart(listView)
+		currQ := q.req.Questions[q.currQuestion]
+
+		// Question text
+		questionText := t.Dialog.TitleAccent.Padding(1, 2).Render(currQ.Question)
+		rc.AddPart(questionText)
+
+		// Content area
+		if q.isInTextInput {
+			q.textInput.Focus()
+			rc.AddPart(q.textInput.View())
+		} else if currQ.HasPreview() && area.Dx() >= previewMinTotalWidth {
+			q.renderPreviewLayout(rc, currQ, innerWidth, height)
+		} else {
+			q.list.SetSize(innerWidth, max(1, height-10))
+			listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
+			rc.AddPart(listView)
+		}
 	}
 
 	// Help
@@ -388,27 +417,22 @@ const (
 func (q *Questions) renderPreviewLayout(rc *RenderContext, currQ questions.Question, innerWidth, height int) {
 	t := q.com.Styles
 
-	rightWidth := innerWidth - previewLeftWidth - 2 // 2 for gap
+	rightWidth := innerWidth - previewLeftWidth - 2
 	if rightWidth < 20 {
-		// Not enough space, fall back to single column
 		q.list.SetSize(innerWidth, max(1, height-10))
 		listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
 		rc.AddPart(listView)
 		return
 	}
 
-	// Render left panel: option list at constrained width
 	q.list.SetSize(previewLeftWidth, max(1, height-10))
 	leftView := q.list.Render()
 
-	// Get preview content for focused option
 	previewContent := ""
 	if q.focusedIdx >= 0 && q.focusedIdx < len(currQ.Options) {
 		previewContent = currQ.Options[q.focusedIdx].Preview
 	}
-
-	// Render right panel: preview box
-	maxLines := max(1, height-6) // account for nav bar, question text, borders
+	maxLines := max(1, height-6)
 	rightView := renderPreviewBox(previewBoxConfig{
 		content:  previewContent,
 		width:    rightWidth,
@@ -417,7 +441,6 @@ func (q *Questions) renderPreviewLayout(rc *RenderContext, currQ questions.Quest
 		styles:   t,
 	})
 
-	// Join side-by-side
 	rc.AddPart(joinSideBySide(leftView, rightView, previewLeftWidth, innerWidth))
 }
 
@@ -427,7 +450,6 @@ func joinSideBySide(left, right string, leftWidth, totalWidth int) string {
 	rightLines := strings.Split(right, "\n")
 
 	maxLineCount := max(len(leftLines), len(rightLines))
-	// Pad shorter side
 	for len(leftLines) < maxLineCount {
 		leftLines = append(leftLines, "")
 	}
@@ -438,7 +460,6 @@ func joinSideBySide(left, right string, leftWidth, totalWidth int) string {
 	gap := "  "
 	var result []string
 	for i := 0; i < maxLineCount; i++ {
-		// Left line padded to leftWidth
 		leftPart := leftLines[i]
 		leftPartWidth := lipgloss.Width(leftPart)
 		if leftPartWidth < leftWidth {
@@ -451,27 +472,85 @@ func joinSideBySide(left, right string, leftWidth, totalWidth int) string {
 	return strings.Join(result, "\n")
 }
 
-// renderNavigationBar renders the question tabs.
-func (q *Questions) renderNavigationBar() string {
+// renderNavigationBar renders the question tabs + Submit tab.
+// Layout: ← [☐] Q1 [☑] Q2 [✓ Submit] →
+// Modelled after Claude Code's QuestionNavigationBar.
+func (q *Questions) renderNavigationBar(innerWidth int) string {
 	t := q.com.Styles
-	var tabs []string
+	var parts []string
+
+	// Left arrow
+	if q.currQuestion <= 0 {
+		parts = append(parts, t.Dialog.SecondaryText.Render("← "))
+	} else {
+		parts = append(parts, "← ")
+	}
+
+	// Question tabs
 	for i, quest := range q.req.Questions {
 		header := quest.Header
 		if header == "" {
 			header = fmt.Sprintf("Q%d", i+1)
 		}
-		_, answered := q.selectedOpts[i]
-		checkbox := "[ ]"
+		answered := q.isQuestionAnswered(i)
+		checkbox := "☐"
 		if answered {
-			checkbox = "[x]"
+			checkbox = "☑"
 		}
+		tabText := fmt.Sprintf(" %s %s ", checkbox, header)
 		if i == q.currQuestion {
-			tabs = append(tabs, t.Dialog.SelectedItem.Render(fmt.Sprintf(" %s %s ", checkbox, header)))
+			parts = append(parts, t.Dialog.SelectedItem.Render(tabText))
 		} else {
-			tabs = append(tabs, fmt.Sprintf(" %s %s ", checkbox, header))
+			parts = append(parts, t.Dialog.NormalItem.Render(tabText))
 		}
 	}
-	return strings.Join(tabs, " ")
+
+	// Submit tab
+	submitText := " ✓ Submit "
+	if q.isOnSubmitTab() {
+		parts = append(parts, t.Dialog.SelectedItem.Bold(true).Render(submitText))
+	} else {
+		parts = append(parts, t.Dialog.NormalItem.Render(submitText))
+	}
+
+	// Right arrow
+	if q.isOnSubmitTab() {
+		parts = append(parts, t.Dialog.SecondaryText.Render(" →"))
+	} else {
+		parts = append(parts, " →")
+	}
+
+	return strings.Join(parts, "")
+}
+
+// renderSubmitView renders the content when the Submit tab is active.
+// Shows a brief summary of answers and a prompt to submit.
+func (q *Questions) renderSubmitView(innerWidth int) string {
+	t := q.com.Styles
+	var lines []string
+
+	for i, quest := range q.req.Questions {
+		answered := q.isQuestionAnswered(i)
+		header := quest.Header
+		if header == "" {
+			header = fmt.Sprintf("Q%d", i+1)
+		}
+		status := "☐"
+		if answered {
+			status = "☑"
+		}
+		line := fmt.Sprintf("  %s %s", status, header)
+		if answered {
+			lines = append(lines, t.Dialog.NormalItem.Render(line))
+		} else {
+			lines = append(lines, t.Dialog.SecondaryText.Render(line))
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, t.Dialog.SelectedItem.Padding(0, 2).Render("Press Enter to submit all answers"))
+
+	return strings.Join(lines, "\n")
 }
 
 // ShortHelp returns the short help view.
@@ -481,7 +560,7 @@ func (q *Questions) ShortHelp() []key.Binding {
 		q.keyMap.Down,
 		q.keyMap.Submit,
 	}
-	if len(q.req.Questions) > 1 {
+	if len(q.req.Questions) > 1 || true { // always show nav for Submit tab
 		h = append(h, q.keyMap.Previous, q.keyMap.Next)
 	}
 	h = append(h, q.keyMap.Close)

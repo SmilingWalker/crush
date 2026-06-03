@@ -49,17 +49,6 @@ func (l *questionOptionsList) SetQuestion(q questions.Question, selOpts map[int]
 		isOther:      true,
 		isMultiSelect: q.MultiSelect,
 	})
-	// Add "Submit" option for multi-select
-	if q.MultiSelect {
-		items = append(items, &questionOptionsListItem{
-			Versioned:     list.NewVersioned(),
-			parent:        l,
-			opt:           questions.Option{Label: "Submit", Description: "Confirm selections"},
-			index:         len(q.Options) + 1,
-			isSubmit:      true,
-			isMultiSelect: q.MultiSelect,
-		})
-	}
 	l.SetItems(items...)
 }
 
@@ -110,15 +99,6 @@ func (i *questionOptionsListItem) SetSelected(selected bool) {
 // Render implements list.Item.
 func (i *questionOptionsListItem) Render(width int) string {
 	t := i.parent.t
-
-	// Submit item: special rendering with arrow indicator
-	if i.isSubmit {
-		label := "  ► Submit"
-		if i.focused {
-			return t.Dialog.SelectedItem.Bold(true).Render(label)
-		}
-		return t.Dialog.NormalItem.Render(label)
-	}
 
 	// Indicator: checkbox for multi-select, radio for single-select
 	var indicator string
