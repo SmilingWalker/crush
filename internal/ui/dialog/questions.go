@@ -572,19 +572,19 @@ func (q *Questions) renderSubmitView(innerWidth int) string {
 			}
 		}
 
-		line := fmt.Sprintf("  %s %s", status, header)
+		line := fmt.Sprintf(" %s %s", status, header)
 		if answerText != "" {
-			line = fmt.Sprintf("  %s %s → %s", status, header, answerText)
+			line = fmt.Sprintf(" %s %s → %s", status, header, answerText)
 		}
 		if answered {
 			lines = append(lines, t.Dialog.NormalItem.Render(line))
 		} else {
 			lines = append(lines, t.Dialog.SecondaryText.Render(line))
 		}
-		lines = append(lines, "") // spacing between items
 	}
 
-	// Check if all questions are answered
+	// Submit prompt — subtle, not a giant button
+	lines = append(lines, "")
 	allAnswered := true
 	for i := range q.req.Questions {
 		if !q.isQuestionAnswered(i) {
@@ -592,16 +592,10 @@ func (q *Questions) renderSubmitView(innerWidth int) string {
 			break
 		}
 	}
-
-	// Separator line
-	sep := t.Dialog.SecondaryText.Render(strings.Repeat("─", max(0, innerWidth-4)))
-	lines = append(lines, sep, "")
-
-	// Submit prompt — styled as a button with vertical padding
 	if allAnswered {
-		lines = append(lines, t.Dialog.SelectedItem.Bold(true).Padding(1, 2).Render("  ► Submit all answers  "))
+		lines = append(lines, t.Dialog.SelectedItem.Render(" Press Enter to submit "))
 	} else {
-		lines = append(lines, t.Dialog.SecondaryText.Padding(1, 2).Render("  … Submit (some questions unanswered)  "))
+		lines = append(lines, t.Dialog.SecondaryText.Render(" Press Enter to submit "))
 	}
 
 	return strings.Join(lines, "\n")
