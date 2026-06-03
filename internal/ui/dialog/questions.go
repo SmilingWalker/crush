@@ -35,7 +35,10 @@ type Questions struct {
 	otherTexts    map[int]string         // map[questionIdx]otherText
 	isInTextInput bool
 	textInput     textinput.Model
-	focusedIdx    int // index of the option being previewed
+	focusedIdx     int // index of the option being previewed
+	isInNotesInput bool
+	notesTexts     map[int]string // map[questionIdx]notesText
+	notesInput     textinput.Model
 
 	// Keyboard
 	keyMap questionsKeyMap
@@ -51,6 +54,7 @@ type questionsKeyMap struct {
 	Next     key.Binding
 	Previous key.Binding
 	Submit   key.Binding
+	Notes    key.Binding
 	Close    key.Binding
 }
 
@@ -65,6 +69,8 @@ func NewQuestionsDialog(com *common.Common, req questions.QuestionsRequest) *Que
 		list:         newQuestionOptionsList(com.Styles),
 		help:         help.New(),
 		textInput:    newTextInput(com.Styles),
+		notesTexts:  make(map[int]string),
+		notesInput:  newNotesInput(com.Styles),
 	}
 
 	d.keyMap = questionsKeyMap{
@@ -89,6 +95,10 @@ func NewQuestionsDialog(com *common.Common, req questions.QuestionsRequest) *Que
 			key.WithHelp("enter", "confirm"),
 		),
 		Close: CloseKey,
+		Notes: key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "notes"),
+		),
 	}
 
 	d.list.Focus()
@@ -401,6 +411,16 @@ func newTextInput(sty *styles.Styles) textinput.Model {
 	ti := textinput.New()
 	ti.SetStyles(sty.TextInput)
 	ti.Prompt = "Your answer: "
+	ti.CharLimit = 500
+	ti.SetVirtualCursor(false)
+	return ti
+}
+
+// newNotesInput creates a textinput.Model configured for the notes annotation input.
+func newNotesInput(sty *styles.Styles) textinput.Model {
+	ti := textinput.New()
+	ti.SetStyles(sty.TextInput)
+	ti.Prompt = "Notes: "
 	ti.CharLimit = 500
 	ti.SetVirtualCursor(false)
 	return ti
