@@ -107,6 +107,8 @@ func (i *questionOptionsListItem) SetSelected(selected bool) {
 }
 
 // Render implements list.Item.
+// Layout: two lines — line 1 is indicator + label (highlighted when focused),
+// line 2 is description (gray, indented). Follows Crush's commands_item pattern.
 func (i *questionOptionsListItem) Render(width int) string {
 	t := i.parent.t
 
@@ -126,25 +128,39 @@ func (i *questionOptionsListItem) Render(width int) string {
 		}
 	}
 
-	// Label style based on focus
-	labelStyle := t.Dialog.NormalItem
+	// Style based on focus
+	style := t.Dialog.NormalItem
 	if i.focused {
-		labelStyle = t.Dialog.SelectedItem
+		style = t.Dialog.SelectedItem
 	}
 
-	labelRender := labelStyle.Render(i.opt.Label)
+	// Line 1: indicator + label — truncate label to fit width
+	label := i.opt.Label
+	availWidth := width - lipgloss.Width(indicator)
+	if availWidth < 4 {
+		availWidth = 4
+	}
+	label = ansi.Truncate(label, availWidth, "…")
+	labelPart := indicator + label
 
-	// Description on the same line, right-aligned with gap
-	descRender := ""
+	// Pad line 1 to full width so highlight background covers entire row
+	labelPartWidth := lipgloss.Width(labelPart)
+	gap := strings.Repeat(" ", max(0, width-labelPartWidth))
+	line1 := style.Render(labelPart + gap)
+
+	// Line 2: description in gray, indented by indicator width
 	if len(i.opt.Description) > 0 {
 		descStyle := t.Dialog.SecondaryText
-		descAvailWidth := width - lipgloss.Width(indicator) - lipgloss.Width(labelRender) - 2
-		optDesc := ansi.Truncate(i.opt.Description, max(0, descAvailWidth), "…")
-		descRender = descStyle.Render(optDesc)
+		if i.focused {
+			descStyle = t.Dialog.SelectedItem
+		}
+		indent := strings.Repeat(" ", lipgloss.Width(indicator))
+		descContent := ansi.Truncate(i.opt.Description, max(0, width-lipgloss.Width(indent)), "…")
+		descWidth := lipgloss.Width(descContent)
+		descGap := strings.Repeat(" ", max(0, width-lipgloss.Width(indent)-descWidth))
+		line2 := descStyle.Render(indent + descContent + descGap)
+		return lipgloss.JoinVertical(lipgloss.Left, line1, line2)
 	}
 
-	gapWidth := max(0, width-lipgloss.Width(indicator)-lipgloss.Width(labelRender)-lipgloss.Width(descRender))
-	gapRender := labelStyle.Render(strings.Repeat(" ", gapWidth))
-
-	return labelStyle.Render(indicator + labelRender + gapRender + descRender)
+	return line1
 }
