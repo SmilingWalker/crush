@@ -7,6 +7,7 @@ Usage notes:
 - Add a "preview" field to options with markdown content to show a side-by-side preview panel
 - Preview is useful for code snippets, file contents, or detailed descriptions
 - Keep preview content concise (excessive lines will be truncated)
+- Keep option descriptions under 40 characters — use preview for longer explanations
 
 Constraints:
 - Ask 1-4 questions at a time
