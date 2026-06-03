@@ -31,21 +31,23 @@ func (l *questionOptionsList) SetQuestion(q questions.Question, selOpts map[int]
 	var items []list.Item
 	for i, opt := range q.Options {
 		items = append(items, &questionOptionsListItem{
-			Versioned: list.NewVersioned(),
-			parent:    l,
-			opt:       opt,
-			selected:  selOpts[i],
-			index:     i,
+			Versioned:    list.NewVersioned(),
+			parent:       l,
+			opt:          opt,
+			selected:     selOpts[i],
+			index:        i,
+			isMultiSelect: q.MultiSelect,
 		})
 	}
 	// Add "Other..." option
 	items = append(items, &questionOptionsListItem{
-		Versioned: list.NewVersioned(),
-		parent:    l,
-		opt:       questions.Option{Label: "Other...", Description: "Provide a custom answer"},
-		selected:  selOpts[len(q.Options)], // Other is at index len(q.Options)
-		index:     len(q.Options),
-		isOther:   true,
+		Versioned:    list.NewVersioned(),
+		parent:       l,
+		opt:          questions.Option{Label: "Other...", Description: "Provide a custom answer"},
+		selected:     selOpts[len(q.Options)], // Other is at index len(q.Options)
+		index:        len(q.Options),
+		isOther:      true,
+		isMultiSelect: q.MultiSelect,
 	})
 	l.SetItems(items...)
 }
@@ -53,12 +55,13 @@ func (l *questionOptionsList) SetQuestion(q questions.Question, selOpts map[int]
 // questionOptionsListItem is a list item for a question's option.
 type questionOptionsListItem struct {
 	*list.Versioned
-	parent   *questionOptionsList
-	opt      questions.Option
-	selected bool
-	focused  bool
-	index    int
-	isOther  bool
+	parent       *questionOptionsList
+	opt          questions.Option
+	selected     bool
+	focused      bool
+	index        int
+	isOther      bool
+	isMultiSelect bool
 }
 
 var _ list.Item = &questionOptionsListItem{}
@@ -96,12 +99,20 @@ func (i *questionOptionsListItem) SetSelected(selected bool) {
 func (i *questionOptionsListItem) Render(width int) string {
 	t := i.parent.t
 
-	// Radio indicator
+	// Indicator: checkbox for multi-select, radio for single-select
 	var indicator string
-	if i.selected {
-		indicator = t.Radio.On.Padding(0, 1, 0, 0).Render()
+	if i.isMultiSelect {
+		if i.selected {
+			indicator = "☑ "
+		} else {
+			indicator = "☐ "
+		}
 	} else {
-		indicator = t.Radio.Off.Padding(0, 1, 0, 0).Render()
+		if i.selected {
+			indicator = t.Radio.On.Padding(0, 1, 0, 0).Render()
+		} else {
+			indicator = t.Radio.Off.Padding(0, 1, 0, 0).Render()
+		}
 	}
 
 	// Label style based on focus

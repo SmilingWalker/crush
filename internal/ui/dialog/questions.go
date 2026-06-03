@@ -7,10 +7,12 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/ui/common"
+	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
 	uv "github.com/charmbracelet/ultraviolet"
 )
@@ -32,7 +34,7 @@ type Questions struct {
 	selectedOpts  map[int]map[int]bool // map[questionIdx]map[optionIdx]bool
 	otherTexts    map[int]string       // map[questionIdx]otherText
 	isInTextInput bool
-	textInput     string
+	textInput     textinput.Model
 	focusedIdx    int // P2: index of the option being previewed
 
 	// Keyboard
@@ -63,6 +65,7 @@ func NewQuestionsDialog(com *common.Common, req questions.QuestionsRequest) *Que
 		otherTexts:   make(map[int]string),
 		list:         newQuestionOptionsList(com.Styles),
 		help:         help.New(),
+		textInput:    newTextInput(com.Styles),
 	}
 
 	d.keyMap = questionsKeyMap{
@@ -195,11 +198,13 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 	case key.Matches(msg, q.keyMap.Close):
 		// Escape exits text input
 		q.isInTextInput = false
+		q.textInput.SetValue("")
+		q.textInput.Blur()
 		q.refreshList()
 		return nil
 	case msg.String() == "enter":
 		// Submit the text as the Other answer
-		text := strings.TrimSpace(q.textInput)
+		text := strings.TrimSpace(q.textInput.Value())
 		if text != "" {
 			currQ := q.req.Questions[q.currQuestion]
 			otherIdx := len(currQ.Options) // Other is the last item
@@ -207,6 +212,8 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 			q.otherTexts[q.currQuestion] = text
 		}
 		q.isInTextInput = false
+		q.textInput.SetValue("")
+		q.textInput.Blur()
 		// Auto-advance if single select
 		if !q.req.Questions[q.currQuestion].MultiSelect {
 			if q.currQuestion < len(q.req.Questions)-1 {
@@ -217,17 +224,9 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 			}
 		}
 		return nil
-	case msg.String() == "backspace":
-		if len(q.textInput) > 0 {
-			q.textInput = q.textInput[:len(q.textInput)-1]
-		}
-		return nil
 	default:
-		// Append printable character to text input
-		ch := msg.String()
-		if len(ch) == 1 && ch >= " " {
-			q.textInput += ch
-		}
+		// Delegate all other keys to the textinput component
+		q.textInput.Update(msg)
 		return nil
 	}
 }
@@ -243,7 +242,7 @@ func (q *Questions) handleToggle() Action {
 	// Check if "Other" was selected
 	if idx == len(currQ.Options) {
 		q.isInTextInput = true
-		q.textInput = ""
+		q.textInput.SetValue(""); q.textInput.Focus()
 		return nil
 	}
 
@@ -276,13 +275,9 @@ func (q *Questions) handleSubmit() Action {
 			return q.buildSubmitAction()
 		}
 	} else {
-		// Multi select: advance to next question or submit all
-		if q.currQuestion < len(q.req.Questions)-1 {
-			q.currQuestion++
-			q.initList()
-		} else {
-			return q.buildSubmitAction()
-		}
+		// Multi select: Enter always submits all answers
+		// Use Tab/←/→ to navigate between questions in multi-select mode
+		return q.buildSubmitAction()
 	}
 	return nil
 }
@@ -353,20 +348,20 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	rc.AddPart(questionText)
 
 	// Content area
-	if q.isInTextInput {
-		// Text input mode
-		prompt := t.Dialog.InputPrompt.Render("Your answer: ")
-		input := t.Dialog.SelectedItem.Render(q.textInput + "|")
-		rc.AddPart(prompt + input)
-	} else if currQ.HasPreview() && area.Dx() >= previewMinTotalWidth {
-		// P2: Side-by-side preview mode
-		q.renderPreviewLayout(rc, currQ, innerWidth, height)
-	} else {
-		// Standard single-column layout
-		q.list.SetSize(innerWidth, max(1, height-10))
-		listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
-		rc.AddPart(listView)
-	}
+		// Content area
+		if q.isInTextInput {
+			// Text input mode: use textinput.Model's built-in rendering
+			q.textInput.Focus()
+			rc.AddPart(q.textInput.View())
+		} else if currQ.HasPreview() && area.Dx() >= previewMinTotalWidth {
+			// P2: Side-by-side preview mode
+			q.renderPreviewLayout(rc, currQ, innerWidth, height)
+		} else {
+			// Standard single-column layout
+			q.list.SetSize(innerWidth, max(1, height-10))
+			listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
+			rc.AddPart(listView)
+		}
 
 	// Help
 	rc.Help = q.help.View(q)
@@ -375,6 +370,16 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	DrawCenterCursor(scr, area, view, nil)
 
 	return nil
+}
+
+// newTextInput creates a textinput.Model configured for the "Other" answer input.
+func newTextInput(sty *styles.Styles) textinput.Model {
+	ti := textinput.New()
+	ti.SetStyles(sty.TextInput)
+	ti.Prompt = "Your answer: "
+	ti.CharLimit = 500
+	ti.SetVirtualCursor(false)
+	return ti
 }
 
 const (
