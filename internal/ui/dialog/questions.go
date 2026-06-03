@@ -171,6 +171,10 @@ func (q *Questions) HandleMsg(msg tea.Msg) Action {
 			return q.handleTextInput(msg)
 		}
 
+		if q.isInNotesInput {
+			return q.handleNotesInput(msg)
+		}
+
 		// Normal option navigation
 		switch {
 		case key.Matches(msg, q.keyMap.Up):
@@ -209,6 +213,13 @@ func (q *Questions) HandleMsg(msg tea.Msg) Action {
 			}
 		case key.Matches(msg, q.keyMap.Submit):
 			return q.handleSubmit()
+		case key.Matches(msg, q.keyMap.Notes):
+			if !q.isOnSubmitTab() && !q.isInTextInput {
+				q.isInNotesInput = true
+				existing := q.notesTexts[q.currQuestion]
+				q.notesInput.SetValue(existing)
+				q.notesInput.Focus()
+			}
 		case key.Matches(msg, q.keyMap.Close):
 			slog.Info("QuestionsDialog rejected by user")
 			return ActionQuestionsResponse{
@@ -258,6 +269,35 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 		// We must capture the return value, otherwise key events are lost.
 		var cmd tea.Cmd
 		q.textInput, cmd = q.textInput.Update(msg)
+		if cmd != nil {
+			return ActionCmd{Cmd: cmd}
+		}
+		return nil
+	}
+}
+
+// handleNotesInput processes key events while the user is typing notes/annotations.
+func (q *Questions) handleNotesInput(msg tea.KeyPressMsg) Action {
+	switch {
+	case key.Matches(msg, q.keyMap.Close):
+		q.isInNotesInput = false
+		q.notesInput.SetValue("")
+		q.notesInput.Blur()
+		return nil
+	case msg.String() == "enter":
+		text := strings.TrimSpace(q.notesInput.Value())
+		if text != "" {
+			q.notesTexts[q.currQuestion] = text
+		} else {
+			delete(q.notesTexts, q.currQuestion)
+		}
+		q.isInNotesInput = false
+		q.notesInput.SetValue("")
+		q.notesInput.Blur()
+		return nil
+	default:
+		var cmd tea.Cmd
+		q.notesInput, cmd = q.notesInput.Update(msg)
 		if cmd != nil {
 			return ActionCmd{Cmd: cmd}
 		}
