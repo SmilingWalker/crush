@@ -58,7 +58,11 @@ func formatAnswersResponse(resp questions.QuestionsResponse) fantasy.ToolRespons
 		if ans.IsOther && selected != "" {
 			selected = fmt.Sprintf("%s (user input)", selected)
 		}
-		parts = append(parts, fmt.Sprintf("%q=%q", ans.QuestionText, selected))
+		part := fmt.Sprintf("%q=%q", ans.QuestionText, selected)
+		if ans.Annotation != "" {
+			part += fmt.Sprintf(" (notes: %q)", ans.Annotation)
+		}
+		parts = append(parts, part)
 	}
 	msg := fmt.Sprintf("User answered your questions: %s. You can continue with the user's answers in mind.",
 		strings.Join(parts, ", "))
