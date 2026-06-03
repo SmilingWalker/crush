@@ -249,3 +249,59 @@ func TestValidateQuestions(t *testing.T) {
 		})
 	}
 }
+
+func TestQuestion_HasPreview(t *testing.T) {
+	tests := []struct {
+		name     string
+		question Question
+		want     bool
+	}{
+		{
+			name: "no preview",
+			question: Question{
+				Question: "Q?", Header: "H",
+				Options: []Option{{Label: "A"}, {Label: "B"}},
+			},
+			want: false,
+		},
+		{
+			name: "one option has preview",
+			question: Question{
+				Question: "Q?", Header: "H",
+				Options: []Option{
+					{Label: "A", Preview: "some code"},
+					{Label: "B"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "all options have preview",
+			question: Question{
+				Question: "Q?", Header: "H",
+				Options: []Option{
+					{Label: "A", Preview: "code a"},
+					{Label: "B", Preview: "code b"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "empty preview string is ignored",
+			question: Question{
+				Question: "Q?", Header: "H",
+				Options: []Option{
+					{Label: "A", Preview: ""},
+					{Label: "B"},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, tt.question.HasPreview())
+		})
+	}
+}
