@@ -386,6 +386,8 @@ func (q *Questions) buildSubmitAction() Action {
 			}
 		}
 
+		answer.Annotation = q.notesTexts[questIdx]
+
 		res.Answers[questIdx] = answer
 	}
 	return ActionQuestionsResponse{Response: res}
@@ -434,6 +436,16 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			q.list.SetSize(innerWidth, max(1, height-10))
 			listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
 			rc.AddPart(listView)
+		}
+
+		// Notes area
+		if q.isInNotesInput {
+			q.notesInput.Focus()
+			rc.AddPart(q.notesInput.View())
+		} else if note := q.notesTexts[q.currQuestion]; note != "" {
+			rc.AddPart(t.Dialog.SecondaryText.Padding(0, 2).Render("📝 " + note))
+		} else {
+			rc.AddPart(t.Dialog.SecondaryText.Padding(0, 2).Render("press n to add notes"))
 		}
 	}
 
@@ -671,6 +683,7 @@ func (q *Questions) ShortHelp() []key.Binding {
 	if len(q.req.Questions) > 1 || true { // always show nav for Submit tab
 		h = append(h, q.keyMap.Previous, q.keyMap.Next)
 	}
+	h = append(h, q.keyMap.Notes)
 	h = append(h, q.keyMap.Close)
 	return h
 }
