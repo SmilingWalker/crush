@@ -29,3 +29,8 @@ Preview examples:
 - Show code snippets for different implementation approaches
 - Display file content previews for configuration options
 - Present API response examples for endpoint selection
+
+Annotations:
+- Users can press "n" to add notes to any question
+- Notes are returned with the answer and can provide additional context
+- Example: user selects "OAuth" and adds note "use RS256 signing"
