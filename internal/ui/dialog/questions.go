@@ -367,19 +367,23 @@ func (q *Questions) buildSubmitAction() Action {
 			QuestionText: quest.Question,
 		}
 
-		// Check if Other was selected for this question
-		if otherText, ok := q.otherTexts[questIdx]; ok && otherText != "" {
-			answer.Selected = otherText
-			answer.IsOther = true
-		} else if quest.MultiSelect {
-			// Multi-select: comma-separated labels
+		// Resolve selected options
+		if quest.MultiSelect {
+			// Multi-select: collect all selected labels + Other if present
 			var selected []string
 			for optIdx, sel := range q.selectedOpts[questIdx] {
 				if sel && optIdx < len(quest.Options) {
 					selected = append(selected, quest.Options[optIdx].Label)
 				}
 			}
+			if otherText, ok := q.otherTexts[questIdx]; ok && otherText != "" {
+				selected = append(selected, otherText)
+				answer.IsOther = true
+			}
 			answer.Selected = strings.Join(selected, ",")
+		} else if otherText, ok := q.otherTexts[questIdx]; ok && otherText != "" {
+			answer.Selected = otherText
+			answer.IsOther = true
 		} else {
 			// Single select: find the selected option
 			for optIdx, sel := range q.selectedOpts[questIdx] {
@@ -604,16 +608,19 @@ func (q *Questions) renderSubmitView(innerWidth int) string {
 
 		// Resolve the actual answer text
 		answerText := ""
-		if otherText, ok := q.otherTexts[i]; ok && otherText != "" {
-			answerText = otherText
-		} else if quest.MultiSelect {
+		if quest.MultiSelect {
 			var selected []string
 			for optIdx, sel := range q.selectedOpts[i] {
 				if sel && optIdx < len(quest.Options) {
 					selected = append(selected, quest.Options[optIdx].Label)
 				}
 			}
+			if otherText, ok := q.otherTexts[i]; ok && otherText != "" {
+				selected = append(selected, otherText)
+			}
 			answerText = strings.Join(selected, ", ")
+		} else if otherText, ok := q.otherTexts[i]; ok && otherText != "" {
+			answerText = otherText
 		} else {
 			for optIdx, sel := range q.selectedOpts[i] {
 				if sel && optIdx < len(quest.Options) {
