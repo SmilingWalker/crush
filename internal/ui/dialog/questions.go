@@ -9,11 +9,9 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
@@ -431,7 +429,7 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		if q.isInTextInput {
 			q.textInput.Focus()
 			rc.AddPart(q.textInput.View())
-		} else if currQ.HasPreview() && area.Dx() >= previewMinTotalWidth {
+		} else if currQ.HasPreview() {
 			q.renderPreviewLayout(rc, currQ, innerWidth, height)
 		} else {
 			q.list.SetSize(innerWidth, max(1, height-10))
@@ -480,67 +478,37 @@ func newNotesInput(sty *styles.Styles) textinput.Model {
 }
 
 const (
-	previewLeftWidth    = 30
-	previewMinTotalWidth = 60
+	// previewContentLines is the fixed number of content lines shown in the preview box.
+	previewContentLines = 5
 )
 
-// renderPreviewLayout renders the side-by-side options + preview layout.
+// renderPreviewLayout renders a vertical stack: options list on top, preview below.
+// Both use full innerWidth. Preview is fixed at previewContentLines content rows.
 func (q *Questions) renderPreviewLayout(rc *RenderContext, currQ questions.Question, innerWidth, height int) {
 	t := q.com.Styles
 
-	rightWidth := innerWidth - previewLeftWidth - 2
-	if rightWidth < 20 {
-		q.list.SetSize(innerWidth, max(1, height-10))
-		listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
-		rc.AddPart(listView)
-		return
-	}
+	// Height budget for non-list/non-preview parts:
+	//   title(1) + nav(1) + questionText(3) + notes(1) + help(1) = 7
+	// Preview box: previewContentLines + 2 borders + 1 truncation line = 8
+	// Remaining space goes to the options list.
+	listHeight := max(1, height-7-8)
+	q.list.SetSize(innerWidth, listHeight)
+	listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
+	rc.AddPart(listView)
 
-	q.list.SetSize(previewLeftWidth, max(1, height-10))
-	leftView := q.list.Render()
-
+	// Preview box — full width, fixed content lines
 	previewContent := ""
 	if q.focusedIdx >= 0 && q.focusedIdx < len(currQ.Options) {
 		previewContent = currQ.Options[q.focusedIdx].Preview
 	}
-	maxLines := max(1, height-6)
-	rightView := renderPreviewBox(previewBoxConfig{
+	previewView := renderPreviewBox(previewBoxConfig{
 		content:  previewContent,
-		width:    rightWidth,
-		maxLines: maxLines,
+		width:    innerWidth,
+		maxLines: previewContentLines,
 		minWidth: 20,
 		styles:   t,
 	})
-
-	rc.AddPart(joinSideBySide(leftView, rightView, previewLeftWidth, innerWidth))
-}
-
-// joinSideBySide renders two views side by side with a gap.
-func joinSideBySide(left, right string, leftWidth, totalWidth int) string {
-	leftLines := strings.Split(left, "\n")
-	rightLines := strings.Split(right, "\n")
-
-	maxLineCount := max(len(leftLines), len(rightLines))
-	for len(leftLines) < maxLineCount {
-		leftLines = append(leftLines, "")
-	}
-	for len(rightLines) < maxLineCount {
-		rightLines = append(rightLines, "")
-	}
-
-	gap := "  "
-	var result []string
-	for i := 0; i < maxLineCount; i++ {
-		leftPart := leftLines[i]
-		leftPartWidth := lipgloss.Width(leftPart)
-		if leftPartWidth < leftWidth {
-			leftPart += strings.Repeat(" ", leftWidth-leftPartWidth)
-		} else if leftPartWidth > leftWidth {
-			leftPart = ansi.Truncate(leftPart, leftWidth, "")
-		}
-		result = append(result, leftPart+gap+rightLines[i])
-	}
-	return strings.Join(result, "\n")
+	rc.AddPart(previewView)
 }
 
 // renderNavigationBar renders the question tabs + Submit tab.
