@@ -149,6 +149,7 @@ func (q *Questions) initList() {
 	}
 	q.refreshList()
 	q.list.SelectFirst()
+	q.focusedIdx = q.list.Selected()
 }
 
 func (q *Questions) refreshList() {
