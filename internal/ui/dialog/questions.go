@@ -507,7 +507,7 @@ func (q *Questions) renderPreviewLayout(rc *RenderContext, currQ questions.Quest
 	// Remaining space goes to the options list.
 	listHeight := max(1, height-7-6)
 	q.list.SetSize(innerWidth, listHeight)
-	listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
+	listView := q.list.Render()
 	rc.AddPart(listView)
 
 	// Preview box — full width, fixed content lines
