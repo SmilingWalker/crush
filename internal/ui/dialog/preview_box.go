@@ -100,10 +100,12 @@ func renderPreviewBox(cfg previewBoxConfig) string {
 		truncationBar = boxTeeLeft + label + strings.Repeat(boxHorizontal, fillWidth) + boxTeeRight
 	}
 
-	// Dim style for borders
-	borderStyle := cfg.styles.Dialog.SecondaryText
+	// Foreground-only style for borders. We must NOT use SecondaryText
+	// directly because it has Padding(0,1) which would make border chars
+	// wider than the content lines they frame.
+	borderFg := lipgloss.NewStyle().Foreground(cfg.styles.Dialog.SecondaryText.GetForeground())
 
-	// Build content lines
+	// Build content lines — assemble full line first, then apply style once.
 	var contentLines []string
 	for _, line := range lines {
 		lineWidth := lipgloss.Width(line)
@@ -111,23 +113,19 @@ func renderPreviewBox(cfg previewBoxConfig) string {
 			line = ansi.Truncate(line, innerWidth, "")
 		}
 		padding := strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(line)))
-		contentLines = append(contentLines,
-			borderStyle.Render(boxVertical)+" "+
-				line+
-				padding+" "+
-				borderStyle.Render(boxVertical),
-		)
+		fullLine := boxVertical + " " + line + padding + " " + boxVertical
+		contentLines = append(contentLines, borderFg.Render(fullLine))
 	}
 
 	// Assemble box
 	var parts []string
-	parts = append(parts, borderStyle.Render(topBorder))
+	parts = append(parts, borderFg.Render(topBorder))
 	parts = append(parts, contentLines...)
 	if truncationBar != "" {
 		warningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 		parts = append(parts, warningStyle.Render(truncationBar))
 	}
-	parts = append(parts, borderStyle.Render(bottomBorder))
+	parts = append(parts, borderFg.Render(bottomBorder))
 
 	return strings.Join(parts, "\n")
 }
