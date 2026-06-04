@@ -248,7 +248,11 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 		if text != "" {
 			currQ := q.req.Questions[q.currQuestion]
 			otherIdx := len(currQ.Options)
-			q.selectedOpts[q.currQuestion] = map[int]bool{otherIdx: true}
+			if currQ.MultiSelect {
+				q.selectedOpts[q.currQuestion][otherIdx] = true
+			} else {
+				q.selectedOpts[q.currQuestion] = map[int]bool{otherIdx: true}
+			}
 			q.otherTexts[q.currQuestion] = text
 		}
 		q.isInTextInput = false
