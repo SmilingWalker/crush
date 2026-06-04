@@ -401,7 +401,12 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	t := q.com.Styles
 
 	width := max(0, min(defaultDialogMaxWidth, area.Dx()-t.Dialog.View.GetHorizontalBorderSize()))
-	height := max(0, min(defaultDialogHeight, area.Dy()-t.Dialog.View.GetVerticalBorderSize()))
+	// Use a taller dialog when preview is shown to accommodate options + preview.
+	dialogHeight := defaultDialogHeight
+	if !q.isOnSubmitTab() && len(q.req.Questions) > 0 && q.req.Questions[q.currQuestion].HasPreview() {
+		dialogHeight = defaultDialogHeight + previewHeightExtra
+	}
+	height := max(0, min(dialogHeight, area.Dy()-t.Dialog.View.GetVerticalBorderSize()))
 	innerWidth := width - t.Dialog.View.GetHorizontalFrameSize()
 
 	q.help.SetWidth(innerWidth)
@@ -480,6 +485,8 @@ func newNotesInput(sty *styles.Styles) textinput.Model {
 const (
 	// previewContentLines is the fixed number of content lines shown in the preview box.
 	previewContentLines = 5
+	// previewHeightExtra is the additional dialog height when showing a preview.
+	previewHeightExtra = 5
 )
 
 // renderPreviewLayout renders a vertical stack: options list on top, preview below.
