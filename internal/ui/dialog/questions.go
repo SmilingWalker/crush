@@ -489,7 +489,7 @@ func (q *Questions) renderPreviewLayout(rc *RenderContext, currQ questions.Quest
 
 	// Height budget for non-list/non-preview parts:
 	//   title(1) + nav(1) + questionText(3) + notes(1) + help(1) = 7
-	// Preview box: previewContentLines + 2 borders + 1 truncation line = 8
+	// Preview box: up to previewContentLines + 2 borders + 1 truncation line = 8 max
 	// Remaining space goes to the options list.
 	listHeight := max(1, height-7-8)
 	q.list.SetSize(innerWidth, listHeight)
