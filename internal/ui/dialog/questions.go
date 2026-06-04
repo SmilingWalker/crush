@@ -433,7 +433,7 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		// Content area
 		if q.isInTextInput {
 			q.textInput.Focus()
-			rc.AddPart(t.Dialog.InputPrompt.Render(q.textInput.View()))
+			rc.AddPart(t.Dialog.SelectedItem.Render(q.textInput.View()))
 		} else if currQ.HasPreview() {
 			q.renderPreviewLayout(rc, currQ, innerWidth, height)
 		} else {
@@ -445,7 +445,7 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		// Notes area
 		if q.isInNotesInput {
 			q.notesInput.Focus()
-			rc.AddPart(t.Dialog.InputPrompt.Render(q.notesInput.View()))
+			rc.AddPart(t.Dialog.SelectedItem.Render(q.notesInput.View()))
 		} else if note := q.notesTexts[q.currQuestion]; note != "" {
 			rc.AddPart(t.Dialog.SecondaryText.Padding(0, 2).Render("📝 " + note))
 		} else {
