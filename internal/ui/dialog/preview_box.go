@@ -10,19 +10,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Box-drawing characters for preview borders.
-const (
-	boxTopLeft     = "┌"
-	boxTopRight    = "┐"
-	boxBottomLeft  = "└"
-	boxBottomRight = "┘"
-	boxHorizontal  = "─"
-	boxVertical    = "│"
-	boxTeeLeft     = "├"
-	boxTeeRight    = "┤"
-	scissors       = "✂"
-)
-
 // previewBoxConfig holds configuration for rendering a preview box.
 type previewBoxConfig struct {
 	content  string
@@ -32,9 +19,9 @@ type previewBoxConfig struct {
 	styles   *styles.Styles
 }
 
-// renderPreviewBox renders markdown content inside a bordered box.
-// Returns the rendered string with box-drawing borders, markdown formatting,
-// and line truncation if content exceeds maxLines.
+// renderPreviewBox renders markdown content with a left border indicator.
+// No top/bottom borders to maximize vertical content space.
+// Truncates with ✂ indicator if content exceeds maxLines.
 func renderPreviewBox(cfg previewBoxConfig) string {
 	if cfg.minWidth <= 0 {
 		cfg.minWidth = 20
@@ -43,12 +30,11 @@ func renderPreviewBox(cfg previewBoxConfig) string {
 		cfg.maxLines = 20
 	}
 
-	// Calculate box dimensions
-	innerWidth := cfg.width - 4 // 2 border chars + 2 padding per line
-	if innerWidth < cfg.minWidth-4 {
-		innerWidth = cfg.minWidth - 4
+	// Content width — full cfg.width minus 2 for "│ " prefix
+	innerWidth := cfg.width - 2
+	if innerWidth < cfg.minWidth-2 {
+		innerWidth = cfg.minWidth - 2
 	}
-	boxWidth := innerWidth + 4
 
 	// Render markdown content
 	var rendered string
@@ -61,10 +47,10 @@ func renderPreviewBox(cfg previewBoxConfig) string {
 			var err error
 			rendered, err = renderer.Render(cfg.content)
 			if err != nil {
-				rendered = cfg.content // fallback to raw text
+				rendered = cfg.content
 			}
 		} else {
-			rendered = cfg.content // fallback if renderer is nil
+			rendered = cfg.content
 		}
 	}
 
@@ -79,33 +65,10 @@ func renderPreviewBox(cfg previewBoxConfig) string {
 		lines = lines[:cfg.maxLines]
 	}
 
-	// Build borders
-	hBorder := strings.Repeat(boxHorizontal, boxWidth-2)
-	topBorder := boxTopLeft + hBorder + boxTopRight
-	bottomBorder := boxBottomLeft + hBorder + boxBottomRight
-
-	// Build truncation bar if needed
-	truncationBar := ""
-	if isTruncated {
-		hiddenCount := totalLines - cfg.maxLines
-		label := fmt.Sprintf("%s %s %s %s %d lines hidden ",
-			strings.Repeat(boxHorizontal, 3),
-			scissors,
-			strings.Repeat(boxHorizontal, 3),
-			strings.Repeat(boxHorizontal, 3),
-			hiddenCount,
-		)
-		labelWidth := lipgloss.Width(label)
-		fillWidth := max(0, boxWidth-2-labelWidth)
-		truncationBar = boxTeeLeft + label + strings.Repeat(boxHorizontal, fillWidth) + boxTeeRight
-	}
-
-	// Foreground-only style for borders. We must NOT use SecondaryText
-	// directly because it has Padding(0,1) which would make border chars
-	// wider than the content lines they frame.
+	// Foreground-only style for the left border indicator
 	borderFg := lipgloss.NewStyle().Foreground(cfg.styles.Dialog.SecondaryText.GetForeground())
 
-	// Build content lines — assemble full line first, then apply style once.
+	// Build content lines with left border indicator
 	var contentLines []string
 	for _, line := range lines {
 		lineWidth := lipgloss.Width(line)
@@ -113,19 +76,15 @@ func renderPreviewBox(cfg previewBoxConfig) string {
 			line = ansi.Truncate(line, innerWidth, "")
 		}
 		padding := strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(line)))
-		fullLine := boxVertical + " " + line + padding + " " + boxVertical
-		contentLines = append(contentLines, borderFg.Render(fullLine))
+		contentLines = append(contentLines, borderFg.Render("│ ")+line+padding)
 	}
 
-	// Assemble box
-	var parts []string
-	parts = append(parts, borderFg.Render(topBorder))
-	parts = append(parts, contentLines...)
-	if truncationBar != "" {
-		warningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-		parts = append(parts, warningStyle.Render(truncationBar))
+	// Truncation indicator
+	if isTruncated {
+		hiddenCount := totalLines - cfg.maxLines
+		contentLines = append(contentLines, borderFg.Render(
+			fmt.Sprintf("│ ✂ %d more lines hidden", hiddenCount)))
 	}
-	parts = append(parts, borderFg.Render(bottomBorder))
 
-	return strings.Join(parts, "\n")
+	return strings.Join(contentLines, "\n")
 }

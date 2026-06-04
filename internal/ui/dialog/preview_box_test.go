@@ -20,23 +20,19 @@ func TestRenderPreviewBox(t *testing.T) {
 			styles:   &sty,
 		})
 		require.Contains(t, result, "No preview available")
-		require.Contains(t, result, boxTopLeft)
-		require.Contains(t, result, boxBottomRight)
+		require.Contains(t, result, "│")
 	})
 
-	t.Run("renders markdown content with borders", func(t *testing.T) {
+	t.Run("renders markdown content with left border", func(t *testing.T) {
 		result := renderPreviewBox(previewBoxConfig{
 			content:  "# Hello\n\nThis is **bold** text.",
 			width:    50,
 			maxLines: 10,
 			styles:   &sty,
 		})
-		require.Contains(t, result, boxTopLeft)
-		require.Contains(t, result, boxBottomRight)
-		require.Contains(t, result, boxVertical)
-		// Should have at least 4 lines (top border + content + bottom border)
+		require.Contains(t, result, "│")
 		lines := strings.Split(result, "\n")
-		require.GreaterOrEqual(t, len(lines), 4)
+		require.GreaterOrEqual(t, len(lines), 2)
 	})
 
 	t.Run("truncates long content", func(t *testing.T) {
@@ -47,8 +43,8 @@ func TestRenderPreviewBox(t *testing.T) {
 			maxLines: 5,
 			styles:   &sty,
 		})
-		require.Contains(t, result, scissors)
-		require.Contains(t, result, "lines hidden")
+		require.Contains(t, result, "✂")
+		require.Contains(t, result, "more lines hidden")
 	})
 
 	t.Run("no truncation for short content", func(t *testing.T) {
@@ -58,7 +54,7 @@ func TestRenderPreviewBox(t *testing.T) {
 			maxLines: 20,
 			styles:   &sty,
 		})
-		require.NotContains(t, result, scissors)
+		require.NotContains(t, result, "✂")
 	})
 
 	t.Run("respects width constraint", func(t *testing.T) {
@@ -70,10 +66,9 @@ func TestRenderPreviewBox(t *testing.T) {
 			styles:   &sty,
 		})
 		for _, line := range strings.Split(result, "\n") {
-			// lipgloss.Width measures visual width (strips ANSI codes)
 			visualWidth := lipgloss.Width(line)
-			require.LessOrEqual(t, visualWidth, 36,
-				"line visual width %d exceeds reasonable bounds: %q", visualWidth, line)
+			require.LessOrEqual(t, visualWidth, 30,
+				"line visual width %d exceeds width 30: %q", visualWidth, line)
 		}
 	})
 
@@ -84,7 +79,8 @@ func TestRenderPreviewBox(t *testing.T) {
 			maxLines: 10,
 			styles:   &sty,
 		})
-		require.Contains(t, result, boxTopLeft)
-		require.Contains(t, result, boxBottomRight)
+		require.Contains(t, result, "│")
+		lines := strings.Split(result, "\n")
+		require.Equal(t, 1, len(lines))
 	})
 }
