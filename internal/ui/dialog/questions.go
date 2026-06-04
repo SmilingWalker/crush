@@ -433,7 +433,7 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		// Content area
 		if q.isInTextInput {
 			q.textInput.Focus()
-			rc.AddPart(t.Dialog.SelectedItem.Render(q.textInput.View()))
+			rc.AddPart(q.textInput.View())
 		} else if currQ.HasPreview() {
 			q.renderPreviewLayout(rc, currQ, innerWidth, height)
 		} else {
@@ -445,7 +445,7 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		// Notes area
 		if q.isInNotesInput {
 			q.notesInput.Focus()
-			rc.AddPart(t.Dialog.SelectedItem.Render(q.notesInput.View()))
+			rc.AddPart(q.notesInput.View())
 		} else if note := q.notesTexts[q.currQuestion]; note != "" {
 			rc.AddPart(t.Dialog.SecondaryText.Padding(0, 2).Render("📝 " + note))
 		} else {
@@ -468,7 +468,6 @@ func newTextInput(sty *styles.Styles) textinput.Model {
 	ti.SetStyles(sty.TextInput)
 	ti.Prompt = "Your answer: "
 	ti.CharLimit = 500
-	ti.SetVirtualCursor(false)
 	return ti
 }
 
@@ -478,7 +477,6 @@ func newNotesInput(sty *styles.Styles) textinput.Model {
 	ti.SetStyles(sty.TextInput)
 	ti.Prompt = "Notes: "
 	ti.CharLimit = 500
-	ti.SetVirtualCursor(false)
 	return ti
 }
 
