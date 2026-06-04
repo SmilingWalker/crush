@@ -254,6 +254,7 @@ func (q *Questions) handleTextInput(msg tea.KeyPressMsg) Action {
 		q.isInTextInput = false
 		q.textInput.SetValue("")
 		q.textInput.Blur()
+		q.refreshList()
 		// Auto-advance if single select
 		if !q.req.Questions[q.currQuestion].MultiSelect {
 			q.currQuestion++
