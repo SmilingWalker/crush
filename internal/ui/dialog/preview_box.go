@@ -114,7 +114,7 @@ func renderPreviewBox(cfg previewBoxConfig) string {
 		contentLines = append(contentLines,
 			borderStyle.Render(boxVertical)+" "+
 				line+
-				" "+padding+" "+
+				padding+" "+
 				borderStyle.Render(boxVertical),
 		)
 	}
