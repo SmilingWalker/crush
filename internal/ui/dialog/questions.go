@@ -449,6 +449,7 @@ func (q *Questions) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 			q.list.SetSize(innerWidth, max(1, height-10))
 			listView := t.Dialog.List.Height(q.list.Height()).Render(q.list.Render())
 			rc.AddPart(listView)
+		rc.AddPart(t.Dialog.SecondaryText.Render(strings.Repeat("─", innerWidth)))
 		}
 
 		// Notes area
@@ -509,6 +510,7 @@ func (q *Questions) renderPreviewLayout(rc *RenderContext, currQ questions.Quest
 	q.list.SetSize(innerWidth, listHeight)
 	listView := q.list.Render()
 	rc.AddPart(listView)
+	rc.AddPart(t.Dialog.SecondaryText.Render(strings.Repeat("─", innerWidth)))
 
 	// Preview box — full width, fixed content lines
 	previewContent := ""
