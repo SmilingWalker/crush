@@ -3,10 +3,11 @@ Use this tool when you need to ask the user questions during execution.
 Usage notes:
 - Users will always be able to select "Other" to provide custom text input
 - Use multi_select: true to allow multiple answers
+- In multi-select, users can combine regular options with "Other" for a custom answer alongside their selections
 - If you recommend a specific option, make it the first option and append "(Recommended)" to the label
-- Add a "preview" field to options with markdown content to show a side-by-side preview panel
+- Add a "preview" field to options with markdown content to show a preview panel below the options
 - Preview is useful for code snippets, file contents, or detailed descriptions
-- Keep preview content concise (excessive lines will be truncated)
+- Keep preview content concise (shown as up to 5 lines, truncated with ✂ if longer)
 - Keep option descriptions under 40 characters — use preview for longer explanations
 
 Constraints:
