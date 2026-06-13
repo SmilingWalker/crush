@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"charm.land/fantasy"
@@ -50,4 +51,120 @@ func TestSessionAgentInstancesAreIsolated(t *testing.T) {
 
 	_, arOK := a2.activeRequests.Get("sess-x")
 	require.False(t, arOK, "a1.activeRequests.Set leaked into a2's active requests")
+}
+
+// sameTool reports whether two fantasy.AgentTool interface values reference the
+// same underlying object. It compares pointer addresses for pointer-kind
+// dynamic types; for any non-pointer kind it returns false (a freshly-allocated
+// value type is not aliased mutable state in the sense M1 must guard against).
+// It never panics, regardless of comparability.
+func sameTool(a, b fantasy.AgentTool) bool {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if va.Kind() != reflect.Pointer || vb.Kind() != reflect.Pointer {
+		return false
+	}
+	return va.Pointer() == vb.Pointer()
+}
+
+// toolsByName indexes a tool slice by tool name for cross-call comparison.
+func toolsByName(ts []fantasy.AgentTool) map[string]fantasy.AgentTool {
+	m := make(map[string]fantasy.AgentTool, len(ts))
+	for _, t := range ts {
+		m[t.Info().Name] = t
+	}
+	return m
+}
+
+// TestBuildToolsReturnsDistinctObjects probes whether two consecutive
+// buildTools calls on the same coordinator hand back the SAME tool object
+// pointers (aliasing) or distinct ones.
+//
+// Why this matters for M1: even though Test 1 proves each SessionAgent's tool
+// SLICE is independent (SetTools copies the slice), the slice ELEMENTS are
+// interface values holding pointers — copying the slice copies the pointer, so
+// two agents could still point at the same underlying tool object. If that
+// object carries per-agent mutable state, agents would interfere.
+//
+// Approach: construct a coordinator rich enough to run buildTools (via the
+// existing testEnv fixtures + config.Init), call buildTools twice with a
+// sub-agent config, and assert every same-named tool is a distinct object.
+// "agent" and "agentic_fetch" are intentionally excluded from AllowedTools so
+// buildTools does not invoke c.agentTool / c.agenticFetchTool (which need more
+// setup); this matches real sub-agents. isSubAgent=true makes
+// wrapToolsWithHooks short-circuit, so a nil hookRunner is never dereferenced.
+//
+// Prediction (from reading buildTools: each tools.New*() mints a fresh object,
+// no memoization for non-"agent" tools): all distinct -> green. A failure here
+// is the spike's payoff: it surfaces aliasing M1 must handle by rebuilding
+// tools per-runner (the net M1 contract regardless of outcome).
+func TestBuildToolsReturnsDistinctObjects(t *testing.T) {
+	env := testEnv(t)
+
+	cfg, err := config.Init(env.workingDir, "", false)
+	require.NoError(t, err)
+
+	coord := &coordinator{
+		cfg:         cfg,
+		sessions:    env.sessions,
+		messages:    env.messages,
+		permissions: env.permissions,
+		questions:   env.questions,
+		history:     env.history,
+		filetracker: *env.filetracker,
+		// lspManager, allSkills, activeSkills, skillTracker left nil —
+		// tool constructors tolerate nil (proven by coderAgent in common_test.go).
+	}
+
+	// A representative sub-agent toolset. Deliberately excludes "agent" and
+	// "agentic_fetch" (see comment above).
+	subAgentCfg := config.Agent{
+		Name: "iso-probe",
+		AllowedTools: []string{
+			tools.BashToolName,
+			tools.EditToolName,
+			tools.MultiEditToolName,
+			tools.GlobToolName,
+			tools.GrepToolName,
+			tools.ViewToolName,
+			tools.WriteToolName,
+			tools.AskUserQuestionsToolName,
+			tools.DownloadToolName,
+			tools.FetchToolName,
+			tools.TodosToolName,
+			tools.CrushInfoToolName,
+			tools.CrushLogsToolName,
+			tools.JobOutputToolName,
+			tools.JobKillToolName,
+		},
+	}
+
+	ctx := t.Context()
+	tools1, err := coord.buildTools(ctx, subAgentCfg, true)
+	require.NoError(t, err)
+	tools2, err := coord.buildTools(ctx, subAgentCfg, true)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, tools1, "buildTools returned no tools — AllowedTools filtering left nothing to compare")
+
+	first := toolsByName(tools1)
+	second := toolsByName(tools2)
+
+	// Alias table (logged for the gate artifact; visible with -v).
+	t.Log("buildTools aliasing table (name -> same object across two calls?):")
+	var shared []string
+	for name, t1 := range first {
+		t2, ok := second[name]
+		require.True(t, ok, "tool %q present in first buildTools call but absent in second", name)
+		aliased := sameTool(t1, t2)
+		t.Logf("  %s: %v", name, aliased)
+		if aliased {
+			shared = append(shared, name)
+		}
+	}
+
+	require.Empty(t, shared,
+		"aliasing detected — these tools are the SAME object across two buildTools "+
+			"calls: %v. See spec section 五; M1 AgentFactory must rebuild tools "+
+			"per-runner regardless (the net contract), and any tool here that carries "+
+			"per-agent mutable state must be documented before M1-04/M1-05.", shared)
 }
