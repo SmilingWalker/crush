@@ -547,9 +547,25 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 
 	var filteredTools []fantasy.AgentTool
 	for _, tool := range allTools {
-		if slices.Contains(agent.AllowedTools, tool.Info().Name) {
-			filteredTools = append(filteredTools, tool)
+		toolName := tool.Info().Name
+
+		// Layer 1: agent whitelist (existing behavior).
+		if !slices.Contains(agent.AllowedTools, toolName) {
+			continue
 		}
+
+		// Layer 2 (M1-02): sub-agent safety filter. Applied only when this
+		// agent is a sub-agent; the main agent (coder) is unaffected.
+		if isSubAgent {
+			if tools.IsSubAgentDisallowed(toolName) {
+				continue
+			}
+			if slices.Contains(agent.DisallowedTools, toolName) {
+				continue
+			}
+		}
+
+		filteredTools = append(filteredTools, tool)
 	}
 
 	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
