@@ -738,7 +738,8 @@ func filterSlice(data []string, mask []string, include bool) []string {
 func (c *Config) SetupAgents() {
 	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
 
-	agents := map[string]Agent{
+	// 1. Built-in default agents.
+	builtins := map[string]Agent{
 		AgentCoder: {
 			ID:           AgentCoder,
 			Name:         "Coder",
@@ -758,8 +759,94 @@ func (c *Config) SetupAgents() {
 			// NO MCPs or LSPs by default
 			AllowedMCP: map[string][]string{},
 		},
+
+		// AgentGeneralPurpose is the general-purpose sub-agent for searching
+		// code, analyzing files, and running multi-step tasks.
+		AgentGeneralPurpose: {
+			ID:              AgentGeneralPurpose,
+			Name:            "General Purpose",
+			Description:     "General-purpose sub-agent for searching code, analyzing files, and running multi-step tasks.",
+			Model:           SelectedModelTypeLarge,
+			ContextPaths:    c.Options.ContextPaths,
+			AllowedTools:    []string{"view", "grep", "glob", "ls", "bash", "write"},
+			DisallowedTools: []string{"agent", "ask_user_questions", "job_output", "job_kill", "todos", "crush_info", "crush_logs"},
+			AllowedMCP:      map[string][]string{}, // empty map = no MCPs
+		},
+
+		// AgentExplore is a read-only fast search agent for file discovery.
+		AgentExplore: {
+			ID:              AgentExplore,
+			Name:            "Explore",
+			Description:     "Fast search agent for file discovery and code exploration. Read-only.",
+			Model:           SelectedModelTypeSmall,
+			ContextPaths:    c.Options.ContextPaths,
+			AllowedTools:    []string{"view", "grep", "glob", "ls", "sourcegraph"},
+			DisallowedTools: []string{"agent", "ask_user_questions", "job_output", "job_kill", "todos", "crush_info", "crush_logs", "bash", "write", "edit", "multiedit", "download"},
+			PermissionMode:  PermissionModePlan,
+			AllowedMCP:      map[string][]string{},
+		},
+
+		// AgentPlan is a read-only planning agent for architecture analysis.
+		AgentPlan: {
+			ID:              AgentPlan,
+			Name:            "Plan",
+			Description:     "Planning agent for architecture analysis and implementation design. Read-only.",
+			Model:           SelectedModelTypeSmall,
+			ContextPaths:    c.Options.ContextPaths,
+			AllowedTools:    []string{"view", "grep", "glob", "ls"},
+			DisallowedTools: []string{"agent", "ask_user_questions", "job_output", "job_kill", "todos", "crush_info", "crush_logs", "bash", "write", "edit", "multiedit", "download", "sourcegraph", "fetch", "agentic_fetch"},
+			PermissionMode:  PermissionModePlan,
+			AllowedMCP:      map[string][]string{},
+		},
 	}
-	c.Agents = agents
+
+	// 2. Merge user-supplied agents from c.Agents (populated from the "agents"
+	// key in crush.json during Load). For built-in keys, non-zero user fields
+	// override the builtin defaults while zero fields are preserved; new keys
+	// become custom agents. Disabled agents are dropped from the candidate map.
+	for key, userAgent := range c.Agents {
+		if existing, ok := builtins[key]; ok {
+			if userAgent.Name != "" {
+				existing.Name = userAgent.Name
+			}
+			if userAgent.Description != "" {
+				existing.Description = userAgent.Description
+			}
+			if userAgent.Model != "" {
+				existing.Model = userAgent.Model
+			}
+			if userAgent.AllowedTools != nil {
+				existing.AllowedTools = userAgent.AllowedTools
+			}
+			if userAgent.DisallowedTools != nil {
+				existing.DisallowedTools = userAgent.DisallowedTools
+			}
+			if userAgent.SystemPrompt != "" {
+				existing.SystemPrompt = userAgent.SystemPrompt
+			}
+			if userAgent.PermissionMode != "" {
+				existing.PermissionMode = userAgent.PermissionMode
+			}
+			if userAgent.AllowedMCP != nil {
+				existing.AllowedMCP = userAgent.AllowedMCP
+			}
+			if userAgent.ContextPaths != nil {
+				existing.ContextPaths = userAgent.ContextPaths
+			}
+			if userAgent.Disabled {
+				delete(builtins, key)
+				continue
+			}
+			builtins[key] = existing
+		} else {
+			if userAgent.Disabled {
+				continue
+			}
+			builtins[key] = userAgent
+		}
+	}
+
+	c.Agents = builtins
 }
 
 func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
