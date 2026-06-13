@@ -42,6 +42,9 @@ Thumbs.db
 .env
 .env.local
 
+# Local/per-user Claude Code settings (settings.json stays shared)
+.claude/settings.local.json
+
 # Nix/direnv
 .direnv/
 
