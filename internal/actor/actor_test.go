@@ -34,6 +34,10 @@ func TestActorContext_ShortID(t *testing.T) {
 
 	ac2 := actor.ActorContext{SessionID: "short"}
 	assert.Equal(t, "short", ac2.ShortID())
+
+	// 边界：len 恰好为 8 时不截断，返回完整 8 字符。
+	ac3 := actor.ActorContext{SessionID: "01234567"}
+	assert.Equal(t, "01234567", ac3.ShortID())
 }
 
 func TestActorContext_IsSubAgent(t *testing.T) {

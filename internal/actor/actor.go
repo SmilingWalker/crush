@@ -37,7 +37,9 @@ func FromContext(ctx context.Context) (ActorContext, bool) {
 	return v, ok
 }
 
-// ShortID 返回截断的 SessionID（前8字符），用于日志
+// ShortID 返回截断的 SessionID（前8字符），用于日志。
+// 截断基于字节（len/切片按字节计算），假设 SessionID 为 ASCII；
+// 若 SessionID 含多字节 UTF-8 字符，截断点可能落在字符中间。
 func (a ActorContext) ShortID() string {
 	if len(a.SessionID) > 8 {
 		return a.SessionID[:8]
