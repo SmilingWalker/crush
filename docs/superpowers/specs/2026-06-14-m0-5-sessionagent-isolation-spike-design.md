@@ -91,6 +91,14 @@
 - **gate 条件**：两个测试均绿 + Test 2 的 aliasing 表已记录 → 进入 **M1-01**。
 - **若 Test 2 发现红色 aliasing**：暂停 M1，先在本 spec 附件记录有状态 tool 清单，并把"AgentFactory 每 runner 重建 tools"提升为 M1 的硬约束写进 M1-04/M1-05 的任务描述。
 
+### Spike 结果（2026-06-14 执行，commit `66512ae5` + `815cbfe`）
+
+- **Test 1（容器隔离）**：PASS。两个 `NewSessionAgent` 实例的 4 类容器（tools / large+smallModel / messageQueue / activeRequests）互不影响——突变 `a1` 后 `a2` 完全不变。
+- **Test 2（buildTools aliasing）**：PASS。15 个 sub-agent tool（bash / edit / multiedit / glob / grep / view / write / ask_user_questions / download / fetch / todos / crush_info / crush_logs / job_output / job_kill）在两次 `buildTools` 调用后**全部为不同对象指针**（全 `false`），无 aliasing。
+- **进一步结论（code review 核实源码）**：buildTools 路径上**无任何 memoization**——连被排除的 `agent` / `agentic_fetch` 也是方法（`c.agentTool` / `c.agenticFetchTool`），每次调用 `fantasy.NewParallelAgentTool(...)` 产出新指针；所有 tool 的具体类型均为 `*funcToolWrapper[T]` 指针，故 `sameTool` 始终走指针比较分支。
+- **判定**：🟢 绿灯。
+- **净契约**：M1 的 `AgentFactory.BuildRunner` 每 runner 重建 tools + models 仍为**安全默认**（spec 第五节），非强制 → **可进入 M1-01**。
+
 ---
 
 ## 七、风险
