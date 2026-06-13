@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/crush/internal/questions"
 )
 
-const askUserQuestionsToolName = "ask_user_questions"
+const AskUserQuestionsToolName = "ask_user_questions"
 
 //go:embed ask_user_questions.md
 var askUserQuestionsDescription string
@@ -23,7 +23,7 @@ type AskUserQuestionsParams struct {
 // NewAskUserQuestionsTool creates a tool that asks the user multiple-choice questions.
 func NewAskUserQuestionsTool(questionsService questions.Service) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
-		askUserQuestionsToolName,
+		AskUserQuestionsToolName,
 		askUserQuestionsDescription,
 		func(ctx context.Context, params AskUserQuestionsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			// Validate input

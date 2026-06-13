@@ -14,6 +14,7 @@ import (
 	"charm.land/x/vcr"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/message"
+	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -617,6 +618,75 @@ func TestCoderAgent(t *testing.T) {
 
 				require.True(t, foundGlobResult, "Expected to find glob tool result")
 				require.True(t, foundLSResult, "Expected to find ls tool result")
+			})
+			t.Run("ask_user_questions tool", func(t *testing.T) {
+				// No committed cassette yet for this subtest. Without an API key, the
+				// VCR recorder (ModeRecordOnce) would attempt a live recording and fail
+				// auth in keyless CI. Skip unless the key is present (local recording)
+				// or a cassette already exists (replay). Once a cassette is recorded on
+				// a non-Windows machine and committed, this subtest runs in CI automatically.
+				if os.Getenv("CRUSH_HYPER_API_KEY") == "" {
+					cassette := filepath.Join("testdata", "TestCoderAgent", pair.name, "ask_user_questions_tool.yaml")
+					if _, err := os.Stat(cassette); err != nil {
+						t.Skipf("skipping: CRUSH_HYPER_API_KEY not set and no cassette at %s", cassette)
+					}
+				}
+
+				agent, env := setupAgent(t, pair)
+
+				session, err := env.sessions.Create(t.Context(), "New Session")
+				require.NoError(t, err)
+
+				// Subscribe to question requests and auto-answer.
+				sub := env.questions.Subscribe(t.Context())
+				go func() {
+					for evt := range sub {
+						req := evt.Payload
+						env.questions.Answer(questions.QuestionsResponse{
+							RequestID: req.ID,
+							Answers: []questions.Answer{
+								{QuestionText: req.Questions[0].Question, Selected: req.Questions[0].Options[0].Label},
+							},
+						})
+					}
+				}()
+
+				res, err := agent.Run(t.Context(), SessionAgentCall{
+					Prompt:          "use the ask_user_questions tool to ask me which testing framework I prefer: Go standard library or Testify",
+					SessionID:       session.ID,
+					MaxOutputTokens: 10000,
+				})
+				require.NoError(t, err)
+				assert.NotNil(t, res)
+
+				msgs, err := env.messages.List(t.Context(), session.ID)
+				require.NoError(t, err)
+
+				foundAskTool := false
+				var askTCID string
+
+				for _, msg := range msgs {
+					if msg.Role == message.Assistant {
+						for _, tc := range msg.ToolCalls() {
+							if tc.Name == tools.AskUserQuestionsToolName {
+								foundAskTool = true
+								askTCID = tc.ID
+							}
+						}
+					}
+					if msg.Role == message.Tool {
+						for _, tr := range msg.ToolResults() {
+							if tr.ToolCallID == askTCID {
+								// Assert structural success (model-independent) rather than the exact
+								// option label the LLM happened to phrase for the first option.
+								require.False(t, tr.IsError, "ask_user_questions tool result should not be an error")
+								require.Contains(t, tr.Content, "User answered your questions")
+							}
+						}
+					}
+				}
+
+				require.True(t, foundAskTool, "Expected to find an ask_user_questions tool call")
 			})
 		})
 	}

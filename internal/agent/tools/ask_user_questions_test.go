@@ -72,7 +72,7 @@ func TestAskUserQuestionsTool_ValidationErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			input, err := json.Marshal(tt.params)
 			require.NoError(t, err)
-			call := fantasy.ToolCall{ID: "test-call", Name: askUserQuestionsToolName, Input: string(input)}
+			call := fantasy.ToolCall{ID: "test-call", Name: AskUserQuestionsToolName, Input: string(input)}
 			resp, err := tool.Run(ctx, call)
 			require.NoError(t, err)
 			require.True(t, resp.IsError, "expected error response")
@@ -102,7 +102,7 @@ func TestAskUserQuestionsTool_SuccessfulAnswer(t *testing.T) {
 	input, err := json.Marshal(params)
 	require.NoError(t, err)
 
-	call := fantasy.ToolCall{ID: "test-call", Name: askUserQuestionsToolName, Input: string(input)}
+	call := fantasy.ToolCall{ID: "test-call", Name: AskUserQuestionsToolName, Input: string(input)}
 	resp, err := tool.Run(ctx, call)
 	require.NoError(t, err)
 	require.False(t, resp.IsError)
@@ -129,7 +129,7 @@ func TestAskUserQuestionsTool_Rejection(t *testing.T) {
 	input, err := json.Marshal(params)
 	require.NoError(t, err)
 
-	call := fantasy.ToolCall{ID: "test-call", Name: askUserQuestionsToolName, Input: string(input)}
+	call := fantasy.ToolCall{ID: "test-call", Name: AskUserQuestionsToolName, Input: string(input)}
 	resp, err := tool.Run(ctx, call)
 	require.NoError(t, err)
 	require.False(t, resp.IsError)
@@ -153,7 +153,7 @@ func TestAskUserQuestionsTool_ServiceError(t *testing.T) {
 	input, err := json.Marshal(params)
 	require.NoError(t, err)
 
-	call := fantasy.ToolCall{ID: "test-call", Name: askUserQuestionsToolName, Input: string(input)}
+	call := fantasy.ToolCall{ID: "test-call", Name: AskUserQuestionsToolName, Input: string(input)}
 	_, err = tool.Run(ctx, call)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "service failure")
@@ -180,7 +180,7 @@ func TestAskUserQuestionsTool_OtherAnswer(t *testing.T) {
 	input, err := json.Marshal(params)
 	require.NoError(t, err)
 
-	call := fantasy.ToolCall{ID: "test-call", Name: askUserQuestionsToolName, Input: string(input)}
+	call := fantasy.ToolCall{ID: "test-call", Name: AskUserQuestionsToolName, Input: string(input)}
 	resp, err := tool.Run(ctx, call)
 	require.NoError(t, err)
 	require.False(t, resp.IsError)

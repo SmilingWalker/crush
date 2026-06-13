@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/stretchr/testify/require"
 
@@ -37,6 +38,7 @@ type fakeEnv struct {
 	history     history.Service
 	filetracker *filetracker.Service
 	lspClients  *csync.Map[string, *lsp.Client]
+	questions   questions.Service
 }
 
 type builderFunc func(t *testing.T, r *vcr.Recorder) (fantasy.LanguageModel, error)
@@ -93,6 +95,7 @@ func testEnv(t *testing.T) fakeEnv {
 		history,
 		&filetrackerService,
 		lspClients,
+		questions.NewService(),
 	}
 }
 
@@ -177,6 +180,7 @@ func coderAgent(r *vcr.Recorder, env fakeEnv, large, small fantasy.LanguageModel
 		tools.NewSourcegraphTool(r.GetDefaultClient()),
 		tools.NewViewTool(nil, env.permissions, *env.filetracker, nil, env.workingDir),
 		tools.NewWriteTool(nil, env.permissions, env.history, *env.filetracker, env.workingDir),
+		tools.NewAskUserQuestionsTool(env.questions),
 	}
 
 	return testSessionAgent(env, large, small, systemPrompt, allTools...), nil
