@@ -16,7 +16,8 @@ const (
 	TurnCanceled  TurnStatus = "canceled"  // 被取消
 	TurnFailed    TurnStatus = "failed"    // 执行失败
 
-	// TurnRunning 不是终态，仅用于状态查询
+	// TurnRunning 不是终态，仅用于状态查询。
+	// 仅由未来的 status-query API 产生，Run() 永远不会返回它（Run 返回即意味 turn 结束）。
 	TurnRunning TurnStatus = "running"
 )
 
@@ -71,6 +72,11 @@ type AgentSpec struct {
 	ModelType      string            // 模型选择 ("large" | "small" | "inherit")
 	PermissionMode string            // 权限模式
 	ToolPolicy     ToolPolicyProfile // 工具策略
+
+	// MaxTurns 是该 runner 的 turn 预算上限。零值 = 无限制（无 turn 预算），
+	// 与 config.Agent.MaxTurns 语义一致。AgentSpec 是 BuildRunner 暴露的唯一 seam，
+	// 在 M2 DelegateRunner 需要 turn 预算前预先承载该字段。
+	MaxTurns int
 }
 
 // AgentFactory 创建独立 SessionAgent 实例的工厂。
