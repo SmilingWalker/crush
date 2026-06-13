@@ -689,6 +689,11 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
 	assert.Equal(t, []string{"glob", "grep", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+
+	// M1-01: the three new built-ins are also registered.
+	assert.Contains(t, cfg.Agents, AgentGeneralPurpose)
+	assert.Contains(t, cfg.Agents, AgentExplore)
+	assert.Contains(t, cfg.Agents, AgentPlan)
 }
 
 func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
@@ -711,6 +716,11 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
 	assert.Equal(t, []string{"glob", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+
+	// M1-01: the three new built-ins are also registered.
+	assert.Contains(t, cfg.Agents, AgentGeneralPurpose)
+	assert.Contains(t, cfg.Agents, AgentExplore)
+	assert.Contains(t, cfg.Agents, AgentPlan)
 }
 
 func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
@@ -734,6 +744,11 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
 	assert.Len(t, taskAgent.AllowedTools, 0)
+
+	// M1-01: the three new built-ins are also registered.
+	assert.Contains(t, cfg.Agents, AgentGeneralPurpose)
+	assert.Contains(t, cfg.Agents, AgentExplore)
+	assert.Contains(t, cfg.Agents, AgentPlan)
 }
 
 func TestConfig_configureProvidersWithDisabledProvider(t *testing.T) {
