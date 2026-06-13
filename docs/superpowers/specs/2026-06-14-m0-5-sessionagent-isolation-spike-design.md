@@ -35,6 +35,7 @@
 - 不测 `Run()` 执行、并发、LLM 行为（属 M1-05）。
 - 不测递归深度防护（属 M1-02）。
 - 不接入真实 provider / 网络调用。
+- 不验证**共享注入服务**（sessions / messages / permissions 等按设计在多个 agent 间共享，是另一条隔离轴线）——M1 须单独论证对这些服务的并发访问。
 
 ---
 
@@ -97,6 +98,7 @@
 - **Test 2（buildTools aliasing）**：PASS。15 个 sub-agent tool（bash / edit / multiedit / glob / grep / view / write / ask_user_questions / download / fetch / todos / crush_info / crush_logs / job_output / job_kill）在两次 `buildTools` 调用后**全部为不同对象指针**（全 `false`），无 aliasing。
 - **进一步结论（code review 核实源码）**：buildTools 路径上**无任何 memoization**——连被排除的 `agent` / `agentic_fetch` 也是方法（`c.agentTool` / `c.agenticFetchTool`），每次调用 `fantasy.NewParallelAgentTool(...)` 产出新指针；所有 tool 的具体类型均为 `*funcToolWrapper[T]` 指针，故 `sameTool` 始终走指针比较分支。
 - **判定**：🟢 绿灯。
+- **M1 待办（carry-forward）**：在 M1-04/M1-05 前补测 `agent` / `agentic_fetch` 的 aliasing（二者为 coordinator 方法 `c.agentTool` / `c.agenticFetchTool`，是未来最可能被加 `sync.Once` 缓存的形状）；并按上面非目标所述，单独论证对**共享注入服务**（sessions/messages/permissions）的并发访问。
 - **净契约**：M1 的 `AgentFactory.BuildRunner` 每 runner 重建 tools + models 仍为**安全默认**（spec 第五节），非强制 → **可进入 M1-01**。
 
 ---
