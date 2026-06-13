@@ -57,8 +57,19 @@ const (
 )
 
 const (
-	AgentCoder string = "coder"
-	AgentTask  string = "task"
+	AgentCoder          string = "coder"
+	AgentTask           string = "task"            // kept for backward compatibility
+	AgentGeneralPurpose string = "general-purpose" // M1 new
+	AgentExplore        string = "explore"         // M1 new
+	AgentPlan           string = "plan"            // M1 new
+)
+
+// Permission modes usable by an Agent (PermissionMode field).
+const (
+	PermissionModeDefault           = "default"
+	PermissionModeAcceptEdits       = "acceptEdits"
+	PermissionModePlan              = "plan"
+	PermissionModeBypassPermissions = "bypassPermissions"
 )
 
 type SelectedModel struct {
@@ -603,7 +614,7 @@ type Config struct {
 
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
 
-	Agents map[string]Agent `json:"-"`
+	Agents map[string]Agent `json:"agents,omitempty"`
 }
 
 func (c *Config) EnabledProviders() []ProviderConfig {

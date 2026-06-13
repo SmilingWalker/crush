@@ -24,3 +24,20 @@ func TestAgent_StructFieldsExist(t *testing.T) {
 	assert.Equal(t, []string{"code-review"}, a.Skills)
 	assert.Equal(t, []string{"github"}, a.McpServers)
 }
+
+// TestConfig_AgentIDConstants locks the M1-01 Agent ID constants.
+func TestConfig_AgentIDConstants(t *testing.T) {
+	assert.Equal(t, "coder", AgentCoder)
+	assert.Equal(t, "task", AgentTask)
+	assert.Equal(t, "general-purpose", AgentGeneralPurpose)
+	assert.Equal(t, "explore", AgentExplore)
+	assert.Equal(t, "plan", AgentPlan)
+}
+
+// TestConfig_PermissionModeConstants locks the M1-01 permission-mode constants.
+func TestConfig_PermissionModeConstants(t *testing.T) {
+	assert.Equal(t, "default", PermissionModeDefault)
+	assert.Equal(t, "acceptEdits", PermissionModeAcceptEdits)
+	assert.Equal(t, "plan", PermissionModePlan)
+	assert.Equal(t, "bypassPermissions", PermissionModeBypassPermissions)
+}
