@@ -116,7 +116,10 @@ func TestBuildToolsReturnsDistinctObjects(t *testing.T) {
 	}
 
 	// A representative sub-agent toolset. Deliberately excludes "agent" and
-	// "agentic_fetch" (see comment above).
+	// "agentic_fetch" (see comment above). NOTE: this AllowedTools list is a
+	// snapshot — keep it in sync with the production sub-agent definition when
+	// it lands (M1-04); drift would silently shrink aliasing coverage. The
+	// probed-tool count is logged below so shrinkage is visible in -v output.
 	subAgentCfg := config.Agent{
 		Name: "iso-probe",
 		AllowedTools: []string{
@@ -148,6 +151,7 @@ func TestBuildToolsReturnsDistinctObjects(t *testing.T) {
 
 	first := toolsByName(tools1)
 	second := toolsByName(tools2)
+	t.Logf("probed %d distinct tool names for aliasing", len(first))
 
 	// Alias table (logged for the gate artifact; visible with -v).
 	t.Log("buildTools aliasing table (name -> same object across two calls?):")
