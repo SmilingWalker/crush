@@ -514,6 +514,22 @@ type Agent struct {
 
 	// Overrides the context paths for this agent
 	ContextPaths []string `json:"context_paths,omitempty"`
+
+	// --- M1 new fields ---
+
+	// Per-agent tool denylist.
+	DisallowedTools []string `json:"disallowed_tools,omitempty"`
+
+	// Per-agent system prompt template.
+	SystemPrompt string `json:"system_prompt,omitempty"`
+
+	// Permission mode: default | acceptEdits | plan | bypassPermissions
+	PermissionMode string `json:"permission_mode,omitempty" jsonschema:"description=Permission mode for this agent,enum=default,enum=acceptEdits,enum=plan,enum=bypassPermissions"`
+
+	// --- M2-M4 reserved fields (M1 only defines the schema, not used yet) ---
+	MaxTurns   int      `json:"max_turns,omitempty" jsonschema:"description=Maximum number of agentic turns before stopping"`
+	Skills     []string `json:"skills,omitempty" jsonschema:"description=Skill names to preload for this agent"`
+	McpServers []string `json:"mcp_servers,omitempty" jsonschema:"description=MCP server names available to this agent"`
 }
 
 type Tools struct {
