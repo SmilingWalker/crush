@@ -584,3 +584,35 @@ func TestTeamSnapshot_JSONRoundTrip(t *testing.T) {
 		assert.Falsef(t, present, "empty slice field %q should be absent", absent)
 	}
 }
+
+// TestStatus_ConstSetExhaustsValid is the DRY guard for Seam 3: every const
+// in the all<Type>Statuses slice must be Valid(), and the slice must not be
+// empty. Because Valid() iterates the same slice, a const accidentally
+// omitted from the slice (but used in code) would silently pass other tests
+// — this test fails if the slice is empty or any member is invalid.
+func TestStatus_ConstSetExhaustsValid(t *testing.T) {
+	t.Run("team", func(t *testing.T) {
+		require.NotEmpty(t, allTeamStatuses)
+		for _, s := range allTeamStatuses {
+			require.True(t, TeamStatus(s).Valid())
+		}
+	})
+	t.Run("member", func(t *testing.T) {
+		require.NotEmpty(t, allMemberStatuses)
+		for _, s := range allMemberStatuses {
+			require.True(t, MemberStatus(s).Valid())
+		}
+	})
+	t.Run("task", func(t *testing.T) {
+		require.NotEmpty(t, allTaskStatuses)
+		for _, s := range allTaskStatuses {
+			require.True(t, TaskStatus(s).Valid())
+		}
+	})
+	t.Run("run", func(t *testing.T) {
+		require.NotEmpty(t, allRunStatuses)
+		for _, s := range allRunStatuses {
+			require.True(t, RunStatus(s).Valid())
+		}
+	})
+}
