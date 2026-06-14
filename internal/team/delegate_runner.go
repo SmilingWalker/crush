@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
+	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/actor"
 	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/google/uuid"
@@ -304,4 +306,115 @@ func (d *DelegateRunner) CancelAllGroups() {
 	}
 }
 
+// AggregateResults folds a finished DelegateRunGroup into a single markdown
+// summary string for the parent agent. It emits a header (delegate count +
+// total wall-clock across all Results), then one "### N. <AgentID> (<ms>,
+// <tools> tools)" block per delegate in Results index order, paired with the
+// same-index Task for the AgentID label. A completed delegate renders its
+// final response content (capped at 500 chars per delegate); a failed delegate
+// renders "**FAILED**: <Error>"; a canceled delegate renders "**CANCELED**".
+// The whole summary is hard-capped at 2000 bytes (acceptance #4): once a
+// post-block check sees the builder past 2000, the loop breaks and the output
+// is trimmed to a 2000-byte prefix ending in "... (truncated)".
+//
+// AggregateResults takes no lock: the caller is expected to have called
+// group.Wait() (or otherwise quiesced the group), so Tasks/Results are
+// read-only by the time this runs. A nil Result on a non-terminal slot is
+// tolerated (renders 0 tools, no content body).
+//
+// NOTE: this is the read-side companion to RunGroup (M2-01). It does not touch
+// M1 source. The tool-count helper below mirrors agent.countToolCalls
+// (internal/agent/agent_result.go:58), which is unexported in package agent;
+// if M1-06 ever exports it, the local helper can be replaced with a call.
+func AggregateResults(group *DelegateRunGroup) string {
+	var sb strings.Builder
 
+	totalMs := int64(0)
+	for _, r := range group.Results {
+		totalMs += r.DurationMs
+	}
+	fmt.Fprintf(&sb, "## Delegate Results (%d delegates, %dms)\n\n", len(group.Results), totalMs)
+
+	for i, r := range group.Results {
+		// Pair the result with its same-index task for the AgentID label.
+		// Tasks and Results are the same length (RunGroup pre-allocates
+		// Results to len(Tasks)); guard the index anyway in case a caller
+		// hand-builds a mismatched group.
+		agentID := ""
+		if i < len(group.Tasks) {
+			agentID = group.Tasks[i].AgentID
+		}
+		tools := 0
+		if r.Result != nil {
+			tools = countToolCalls(r.Result)
+		}
+		fmt.Fprintf(&sb, "### %d. %s (%dms, %d tools)\n", i+1, agentID, r.DurationMs, tools)
+
+		switch {
+		case r.Status == agent.TurnFailed:
+			fmt.Fprintf(&sb, "**FAILED**: %s\n", r.Error)
+		case r.Status == agent.TurnCanceled:
+			sb.WriteString("**CANCELED**\n")
+		case r.Result != nil:
+			content := r.Result.Response.Content.Text()
+			fmt.Fprintf(&sb, "%s\n", truncate(content, 500))
+		default:
+			// TurnCompleted with a nil Result (defensive): render no body.
+		}
+
+		sb.WriteString("\n---\n\n")
+
+		// Hard overall cap (acceptance #4). Once a full block pushes the
+		// builder past 2000, stop the loop and mark truncation.
+		if sb.Len() > 2000 {
+			// Reset to a clean <= 2000 prefix, then append the marker so the
+			// final output is deterministically <= 2000 bytes.
+			const marker = "... (truncated)"
+			cut := 2000 - len(marker)
+			if cut < 0 {
+				cut = 0
+			}
+			s := sb.String()
+			if len(s) > cut {
+				s = s[:cut]
+			}
+			sb.Reset()
+			sb.WriteString(s)
+			sb.WriteString(marker)
+			break
+		}
+	}
+
+	return sb.String()
+}
+
+// truncate caps s to max bytes, appending "..." when it was truncated. If
+// len(s) <= max, s is returned unchanged. This is a byte cap (matches the
+// master doc's content[:500]); content is model output for the parent agent,
+// not rendered UI, so rune-safety is out of scope.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+// countToolCalls counts the number of tool calls the model made across every
+// step of the agent run — each ToolCallContent element counts once. Mirrors
+// agent.countToolCalls (internal/agent/agent_result.go:58-68); reimplemented
+// here because the agent-package helper is unexported and M2-05 does not
+// modify M1 source. A nil result returns 0.
+func countToolCalls(result *fantasy.AgentResult) int {
+	if result == nil {
+		return 0
+	}
+	count := 0
+	for _, step := range result.Steps {
+		for _, content := range step.Content {
+			if _, ok := content.(fantasy.ToolCallContent); ok {
+				count++
+			}
+		}
+	}
+	return count
+}
