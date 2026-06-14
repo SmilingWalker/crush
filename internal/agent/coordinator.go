@@ -1128,15 +1128,30 @@ type subAgentParams struct {
 	SessionSetup func(sessionID string)
 }
 
-// runSubAgent runs a sub-agent and handles session management and cost accumulation.
-// It creates a sub-session, runs the agent with the given prompt, and propagates
-// the cost to the parent session.
+// runSubAgent runs a sub-agent and handles session management and cost
+// accumulation. It is a thin wrapper over runSubAgentStructured that preserves
+// the sync (fantasy.ToolResponse, error) contract used by the agent tool
+// handler's pre-M1-06 callers and by runSubAgentAsync.
 func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, error) {
+	resp, _, err := c.runSubAgentStructured(ctx, params)
+	return resp, err
+}
+
+// runSubAgentStructured runs the sub-agent pipeline (session creation, model
+// run, parent-cost propagation) and additionally returns the *fantasy.AgentResult
+// so callers (the agent tool handler, runSubAgentAsync) can build a structured
+// AgentToolResult with token usage and tool-call counts.
+//
+// ar is nil when the run did not produce a result (agent.Run failure, session
+// creation failure, provider misconfiguration). On agent.Run failure the error
+// is swallowed into an error ToolResponse with err == nil — same semantic as
+// runSubAgent, so the parent agent receives a text error, not a Go error.
+func (c *coordinator) runSubAgentStructured(ctx context.Context, params subAgentParams) (fantasy.ToolResponse, *fantasy.AgentResult, error) {
 	// Create sub-session
 	agentToolSessionID := c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID)
 	session, err := c.sessions.CreateTaskSession(ctx, agentToolSessionID, params.SessionID, params.SessionTitle)
 	if err != nil {
-		return fantasy.ToolResponse{}, fmt.Errorf("create session: %w", err)
+		return fantasy.ToolResponse{}, nil, fmt.Errorf("create session: %w", err)
 	}
 
 	// Call session setup function if provided
@@ -1153,7 +1168,7 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 
 	providerCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
 	if !ok {
-		return fantasy.ToolResponse{}, errModelProviderNotConfigured
+		return fantasy.ToolResponse{}, nil, errModelProviderNotConfigured
 	}
 
 	// Run the agent
@@ -1170,15 +1185,15 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		NonInteractive:   true,
 	})
 	if err != nil {
-		return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to generate response: %s", err)), nil
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to generate response: %s", err)), nil, nil
 	}
 
 	// Update parent session cost
 	if err := c.updateParentSessionCost(ctx, session.ID, params.SessionID); err != nil {
-		return fantasy.ToolResponse{}, err
+		return fantasy.ToolResponse{}, nil, err
 	}
 
-	return fantasy.NewTextResponse(result.Response.Content.Text()), nil
+	return fantasy.NewTextResponse(result.Response.Content.Text()), result, nil
 }
 
 // updateParentSessionCost accumulates the cost from a child session to its parent session.

@@ -285,6 +285,76 @@ func TestRunSubAgent(t *testing.T) {
 	})
 }
 
+// TestRunSubAgentStructured_ReturnsAgentResult locks seam #2: the structured
+// runner exposes the full *fantasy.AgentResult so the handler can build the
+// structured AgentToolResult, while the sync ToolResponse contract is preserved
+// (same Content text, same error-swallowing on agent.Run failure).
+func TestRunSubAgentStructured_ReturnsAgentResult(t *testing.T) {
+	const providerID = "test-provider"
+	providerCfg := config.ProviderConfig{ID: providerID}
+
+	t.Run("returns agent result with usage on success", func(t *testing.T) {
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, providerCfg)
+
+		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		require.NoError(t, err)
+
+		agent := newMockAgent(providerID, 4096, func(_ context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+			return &fantasy.AgentResult{
+				Response: fantasy.Response{
+					Content: fantasy.ResponseContent{fantasy.TextContent{Text: "done"}},
+				},
+				TotalUsage: fantasy.Usage{
+					InputTokens:  100,
+					OutputTokens: 50,
+				},
+			}, nil
+		})
+
+		resp, ar, err := coord.runSubAgentStructured(t.Context(), subAgentParams{
+			Agent:          agent,
+			SessionID:      parentSession.ID,
+			AgentMessageID: "msg-1",
+			ToolCallID:     "call-1",
+			Prompt:         "do something",
+			SessionTitle:   "Test Session",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "done", resp.Content)
+		assert.False(t, resp.IsError)
+		require.NotNil(t, ar, "AgentResult must be returned on success")
+		assert.Equal(t, "done", ar.Response.Content.Text())
+		assert.Equal(t, int64(100), ar.TotalUsage.InputTokens)
+		assert.Equal(t, int64(50), ar.TotalUsage.OutputTokens)
+	})
+
+	t.Run("agent run failure returns error response with nil AgentResult", func(t *testing.T) {
+		env := testEnv(t)
+		coord := newTestCoordinator(t, env, providerID, providerCfg)
+
+		parentSession, err := env.sessions.Create(t.Context(), "Parent")
+		require.NoError(t, err)
+
+		agent := newMockAgent(providerID, 4096, func(_ context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+			return nil, errors.New("provider request failed")
+		})
+
+		resp, ar, err := coord.runSubAgentStructured(t.Context(), subAgentParams{
+			Agent:          agent,
+			SessionID:      parentSession.ID,
+			AgentMessageID: "msg-1",
+			ToolCallID:     "call-1",
+			Prompt:         "test",
+			SessionTitle:   "Test",
+		})
+		// Same swallowing semantic as runSubAgent: (errorResponse, nil, nil).
+		require.NoError(t, err)
+		assert.True(t, resp.IsError)
+		assert.Nil(t, ar, "AgentResult must be nil when agent.Run fails")
+	})
+}
+
 func TestUpdateParentSessionCost(t *testing.T) {
 	t.Run("accumulates cost correctly", func(t *testing.T) {
 		env := testEnv(t)
