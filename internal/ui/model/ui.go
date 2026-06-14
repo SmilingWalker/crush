@@ -978,6 +978,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				"response", string(msg.Payload),
 				"options", msg.Options)
 		}
+	case chat.OpenDelegateTranscriptMsg:
+		// Acceptance #4 (M2-04): open the read-only child-transcript modal.
+		// The msg is emitted by a DelegateGroupMessageItem's HandleKeyEvent on
+		// Enter. The child content is re-read from the live item at open time
+		// so a just-finished child's text is current.
+		m.handleOpenDelegateTranscript(msg)
 	default:
 		if m.dialog.HasDialogs() {
 			if cmd := m.handleDialogMsg(msg); cmd != nil {
@@ -3556,6 +3562,30 @@ func (m *UI) handlePermissionNotification(notification permission.PermissionNoti
 			m.dialog.CloseDialog(dialog.PermissionsID)
 		}
 	}
+}
+
+// handleOpenDelegateTranscript opens the read-only child-transcript modal for
+// a completed delegate child (M2-04 acceptance #4). It re-reads the child's
+// content from the live DelegateGroupMessageItem at open time, so a
+// just-finished child's text is current. No-op if the group item is gone or the
+// child index is out of range.
+func (m *UI) handleOpenDelegateTranscript(msg chat.OpenDelegateTranscriptMsg) {
+	item := m.chat.MessageItem(msg.GroupID)
+	if item == nil {
+		return
+	}
+	group, ok := item.(*chat.DelegateGroupMessageItem)
+	if !ok {
+		return
+	}
+	children := group.Children()
+	if msg.ChildIndex < 0 || msg.ChildIndex >= len(children) {
+		return
+	}
+	child := children[msg.ChildIndex]
+	m.dialog.OpenDialog(dialog.NewDelegateTranscript(
+		m.com, msg.GroupID, child.AgentType, child.Result.Content,
+	))
 }
 
 // handleAgentNotification translates domain agent events into desktop
