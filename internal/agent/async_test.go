@@ -11,6 +11,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -340,4 +341,86 @@ func TestRunSubAgentAsync_AgentRunFailureEmitsErrorStatus(t *testing.T) {
 	assert.Equal(t, subAgentStateError, last.State, "agent.Run failure must surface as error status")
 	require.Error(t, last.Error)
 	assert.Contains(t, last.Error.Error(), "provider boom")
+}
+
+// TestRunSubAgentAsync_PublishesProgress locks acceptance #1/#2/#3: an async
+// sub-agent run publishes an AgentProgressEvent at start ("running") and a
+// terminal event at completion ("done") with the real tool-call count and
+// elapsed time derived from the agent result. Publication stops after the
+// terminal event (acceptance #3): exactly one start + one terminal event.
+func TestRunSubAgentAsync_PublishesProgress(t *testing.T) {
+	env := testEnv(t)
+	coord := newTestCoordinator(t, env, "test-provider", setupProviderConfig("test-provider"))
+
+	parent, err := env.sessions.Create(t.Context(), "Parent")
+	require.NoError(t, err)
+
+	// Subscribe BEFORE launching so we observe the start event.
+	subCtx, subCancel := context.WithCancel(context.Background())
+	defer subCancel()
+	sub := SubscribeAgentProgress(subCtx)
+
+	handle := startAsyncSubAgent(t, env, coord, parent.ID, func(_ context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+		return &fantasy.AgentResult{
+			Steps: []fantasy.StepResult{
+				{Response: fantasy.Response{Content: fantasy.ResponseContent{
+					fantasy.ToolCallContent{ToolName: "read"},
+					fantasy.ToolCallContent{ToolName: "bash"},
+				}}},
+			},
+			Response: fantasy.Response{
+				Content: fantasy.ResponseContent{fantasy.TextContent{Text: "done"}},
+			},
+			TotalUsage: fantasy.Usage{
+				InputTokens:  300,
+				OutputTokens: 120,
+			},
+		}, nil
+	})
+	defer handle.Cancel()
+
+	// Drain the run's terminal status so the goroutine completes.
+	got := drainStatus(t, handle)
+	require.Equal(t, subAgentStateDone, got[len(got)-1].State, "expected the run to reach done state")
+
+	// Collect progress events published during the run.
+	var events []pubsub.Event[AgentProgressEvent]
+	collectDone := make(chan struct{})
+	go func() {
+		defer close(collectDone)
+		for {
+			select {
+			case ev := <-sub:
+				events = append(events, ev)
+				if ev.Payload.State == subAgentStateDone {
+					return
+				}
+			case <-time.After(2 * time.Second):
+				return
+			}
+		}
+	}()
+	<-collectDone
+
+	require.NotEmpty(t, events, "expected at least one progress event")
+
+	// First event is the start observation.
+	require.GreaterOrEqual(t, len(events), 1)
+	assert.Equal(t, subAgentStateRunning, events[0].Payload.State)
+	assert.Equal(t, 0, events[0].Payload.ToolUseCount)
+	assert.Equal(t, handle.RunID, events[0].Payload.RunID)
+
+	// Terminal event carries the real tool-call count (2) and token total
+	// (300+120=420), and the last tool name ("bash").
+	var terminal *AgentProgressEvent
+	for i := range events {
+		if events[i].Payload.State == subAgentStateDone {
+			terminal = &events[i].Payload
+		}
+	}
+	require.NotNil(t, terminal, "expected a terminal 'done' progress event")
+	assert.Equal(t, 2, terminal.ToolUseCount, "tool_use_count must reflect the agent's tool calls")
+	assert.Equal(t, "bash", terminal.LastToolName)
+	assert.Equal(t, 420, terminal.TokenCount)
+	assert.GreaterOrEqual(t, terminal.ElapsedMs, int64(0))
 }
