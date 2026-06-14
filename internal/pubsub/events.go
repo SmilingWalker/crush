@@ -24,6 +24,7 @@ const (
 	PayloadTypeSession                PayloadType = "session"
 	PayloadTypeFile                   PayloadType = "file"
 	PayloadTypeAgentEvent             PayloadType = "agent_event"
+	PayloadTypeAgentProgress          PayloadType = "agent_progress"
 	PayloadTypeConfigChanged          PayloadType = "config_changed"
 	PayloadTypeSkillsEvent            PayloadType = "skills_event"
 )
