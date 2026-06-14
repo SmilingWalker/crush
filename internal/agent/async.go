@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
-	"charm.land/fantasy"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/google/uuid"
 )
 
@@ -35,10 +36,15 @@ type SubAgentHandle struct {
 // SubAgentStatus is a single observation of an async sub-agent run. State is
 // one of the subAgentState* constants. Result is populated when State ==
 // "done"; Error is populated when State is "error" or "canceled".
+//
+// M1-06: Result is the structured *AgentToolResult (migrated from
+// *fantasy.ToolResponse per the M1-05 plan's forward-reference). It carries
+// content, token usage, tool-call count, and duration so async consumers
+// (M2 UI) get the full result without re-running the agent.
 type SubAgentStatus struct {
 	State    string
 	Progress string
-	Result   *fantasy.ToolResponse
+	Result   *AgentToolResult
 	Error    error
 }
 
@@ -96,7 +102,8 @@ func (c *coordinator) runSubAgentAsync(ctx context.Context, params subAgentParam
 
 		statusChan <- SubAgentStatus{State: subAgentStateRunning, Progress: "starting"}
 
-		result, err := c.runSubAgent(ctx, params)
+		start := time.Now()
+		resp, ar, err := c.runSubAgentStructured(ctx, params)
 		if ctx.Err() != nil {
 			statusChan <- SubAgentStatus{State: subAgentStateCanceled, Error: ctx.Err()}
 			return
@@ -109,7 +116,14 @@ func (c *coordinator) runSubAgentAsync(ctx context.Context, params subAgentParam
 			statusChan <- SubAgentStatus{State: state, Error: err}
 			return
 		}
+		// agent.Run failure: ar == nil, resp is an error ToolResponse. Surface
+		// as an error status (no structured Result).
+		if ar == nil {
+			statusChan <- SubAgentStatus{State: subAgentStateError, Error: fmt.Errorf("sub-agent failed: %s", resp.Content)}
+			return
+		}
 
+		result := buildAgentToolResult(ar, config.AgentTask, start, c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID))
 		statusChan <- SubAgentStatus{State: subAgentStateDone, Result: &result}
 	}()
 

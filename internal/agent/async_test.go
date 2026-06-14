@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -111,7 +112,8 @@ func TestRunSubAgentAsync_DoneEmitsRunningThenDone(t *testing.T) {
 	assert.Equal(t, subAgentStateDone, last.State)
 	require.NotNil(t, last.Result)
 	assert.Equal(t, "all good", last.Result.Content)
-	assert.False(t, last.Result.IsError)
+	assert.Equal(t, config.AgentTask, last.Result.AgentType)
+	assert.GreaterOrEqual(t, last.Result.TotalDurationMs, int64(0))
 }
 
 // TestRunSubAgentAsync_CancelEmitsCanceledWithin5s locks acceptance #3 and #7:
