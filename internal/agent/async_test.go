@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -286,4 +287,33 @@ func TestCancelAll_TerminatesAllSubAgents(t *testing.T) {
 			t.Fatal("CancelAll did not stop a sub-agent within 5s")
 		}
 	}
+}
+
+// TestRunSubAgentAsync_PanicBecomesErrorStatus locks the isolation invariant:
+// a panic inside the async sub-agent pipeline (e.g. from Agent.Run, an
+// interface dispatch into arbitrary provider code) must NOT crash the process.
+// It is recovered into an error status, and the goroutine still exits (the
+// channel closes, so drainStatus returns).
+func TestRunSubAgentAsync_PanicBecomesErrorStatus(t *testing.T) {
+	env := testEnv(t)
+	coord := newTestCoordinator(t, env, "test-provider", setupProviderConfig("test-provider"))
+
+	parent, err := env.sessions.Create(t.Context(), "Parent")
+	require.NoError(t, err)
+
+	handle := startAsyncSubAgent(t, env, coord, parent.ID, func(_ context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+		panic("boom")
+	})
+
+	// drainStatus blocks until the channel closes. If the goroutine had
+	// crashed the process, we would never get here; returning proves the
+	// panic was recovered and the goroutine exited cleanly.
+	got := drainStatus(t, handle)
+	require.NotEmpty(t, got, "expected at least one status before channel close")
+
+	last := got[len(got)-1]
+	assert.Equal(t, subAgentStateError, last.State, "panic should surface as an error status")
+	require.Error(t, last.Error, "panic should produce a non-nil Error")
+	assert.True(t, strings.Contains(last.Error.Error(), "boom"),
+		"error should mention the panic value %q, got %q", "boom", last.Error.Error())
 }
