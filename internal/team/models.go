@@ -184,3 +184,102 @@ type TeamMember struct {
 	UpdatedAt       time.Time    `json:"updated_at"`
 	StoppedAt       *time.Time   `json:"stopped_at,omitempty"`
 }
+
+// TeamTask is the domain representation of a team_tasks row. assignee_member_id
+// is nullable (a queued task has no assignee); created_by_member_id is NOT NULL
+// so it stays plain string. result_summary/completed_at are nullable.
+type TeamTask struct {
+	ID                string     `json:"id"`
+	TeamID            string     `json:"team_id"`
+	Title             string     `json:"title"`
+	Description       string     `json:"description,omitempty"`
+	Status            TaskStatus `json:"status"`
+	AssigneeMemberID  *string    `json:"assignee_member_id,omitempty"`
+	CreatedByMemberID string     `json:"created_by_member_id"`
+	Priority          int        `json:"priority"`
+	Version           int        `json:"version"`
+	ResultSummary     *string    `json:"result_summary,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
+}
+
+// TeamRun is the domain representation of a team_runs row. task_id is nullable
+// (a run may not be tied to a task); heartbeat_at/started_at/finished_at are
+// nullable epoch columns; token/cost columns are nullable INTEGER. UsageStatus
+// is a free string ("final"|"partial"|"unknown", data-contract doc :126), NOT
+// a Valid()-bearing enum.
+type TeamRun struct {
+	ID               string     `json:"id"`
+	TeamID           string     `json:"team_id"`
+	MemberID         string     `json:"member_id"`
+	TaskID           *string    `json:"task_id,omitempty"`
+	SessionID        string     `json:"session_id"`
+	Status           RunStatus  `json:"status"`
+	Attempt          int        `json:"attempt"`
+	HeartbeatAt      *time.Time `json:"heartbeat_at,omitempty"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	PromptTokens     *int64     `json:"prompt_tokens,omitempty"`
+	CompletionTokens *int64     `json:"completion_tokens,omitempty"`
+	CostMicros       *int64     `json:"cost_micros,omitempty"`
+	UsageStatus      string     `json:"usage_status,omitempty"`
+	Error            string     `json:"error,omitempty"`
+}
+
+// TeamEvent is the domain representation of a team_events row. The (TeamID,
+// Seq) pair is the logical identity — Seq is the per-team monotonic counter
+// sourced from team_event_counters (M3-04 NextEventSeq). ID is the event's own
+// PK. payload_json is an opaque JSON blob string.
+type TeamEvent struct {
+	Seq           int64      `json:"seq"`
+	ID            string     `json:"id"`
+	WorkspaceID   string     `json:"workspace_id"`
+	TeamID        string     `json:"team_id"`
+	EventType     string     `json:"event_type"`
+	EntityType    string     `json:"entity_type"`
+	EntityID      string     `json:"entity_id"`
+	ActorMemberID *string    `json:"actor_member_id,omitempty"`
+	TaskID        *string    `json:"task_id,omitempty"`
+	RunID         *string    `json:"run_id,omitempty"`
+	MessageID     *string    `json:"message_id,omitempty"`
+	PayloadJSON   *string    `json:"payload_json,omitempty"`
+	PublishedAt   *time.Time `json:"published_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+// AuditEvent is the domain representation of a team_audit_events row. Audit is
+// append-only — no Status/Valid(). All optional columns are *string; EventType
+// is the only required non-key TEXT. input_hash is the only field kept as a
+// plain pointer-to-string (NOT a typed hash) to stay persistence-agnostic.
+type AuditEvent struct {
+	ID           string    `json:"id"`
+	WorkspaceID  string    `json:"workspace_id"`
+	TeamID       string    `json:"team_id"`
+	MemberID     *string   `json:"member_id,omitempty"`
+	TaskID       *string   `json:"task_id,omitempty"`
+	RunID        *string   `json:"run_id,omitempty"`
+	SessionID    *string   `json:"session_id,omitempty"`
+	ToolCallID   *string   `json:"tool_call_id,omitempty"`
+	EventType    string    `json:"event_type"`
+	Action       *string   `json:"action,omitempty"`
+	ResourceType *string   `json:"resource_type,omitempty"`
+	ResourceRef  *string   `json:"resource_ref,omitempty"`
+	InputHash    *string   `json:"input_hash,omitempty"`
+	Summary      *string   `json:"summary,omitempty"`
+	Decision     *string   `json:"decision,omitempty"`
+	Scope        *string   `json:"scope,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// TeamSnapshot is the read-model aggregate the API/UI serves for a team at a
+// point in time (master doc :367-373). It bundles the team, its members, its
+// tasks, its runs, and a rolled-up Cost total (micros). Slice fields are nil
+// when empty (omitempty), so a fresh snapshot marshals compactly.
+type TeamSnapshot struct {
+	Team    Team         `json:"team"`
+	Members []TeamMember `json:"members,omitempty"`
+	Tasks   []TeamTask   `json:"tasks,omitempty"`
+	Runs    []TeamRun    `json:"runs,omitempty"`
+	Cost    int64        `json:"cost"`
+}
