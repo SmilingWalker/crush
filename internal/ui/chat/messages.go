@@ -74,6 +74,17 @@ type SendMsg struct {
 	Attachments []message.Attachment
 }
 
+// OpenDelegateTranscriptMsg is emitted by a DelegateGroupMessageItem's
+// HandleKeyEvent when the user presses Enter on a completed child. The main
+// UI model handles it by opening a read-only dialog.DelegateTranscript showing
+// that child's Result.Content. GroupID + ChildIndex identify the child within
+// the group; the main model re-reads the content from the live item at open
+// time (so a just-finished child's content is current).
+type OpenDelegateTranscriptMsg struct {
+	GroupID    string
+	ChildIndex int
+}
+
 type highlightableMessageItem struct {
 	// version is the parent item's version counter. SetHighlight
 	// bumps it on every observable change so the F6 list memo and
