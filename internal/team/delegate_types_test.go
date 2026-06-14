@@ -85,13 +85,15 @@ func TestDelegateRunGroup_TotalTokens(t *testing.T) {
 	assert.Equal(t, int64(425), g.TotalTokens())
 }
 
-// TestDelegateReadOnlyPolicy_Shape locks the read-only policy the delegate
-// runner applies to every delegate: the five read-only tools are allowed,
-// destructive tools are disallowed, permission mode is default. This is the
-// M2-01 in-package helper (Seam 3); M2-03 may later export
-// agent.ReadOnlyDelegatePolicy with the identical shape.
-func TestDelegateReadOnlyPolicy_Shape(t *testing.T) {
-	p := delegateReadOnlyPolicy()
+// TestReadOnlyDelegatePolicy_FromAgentPackage locks that the team-package
+// delegate runner consumes the EXPORTED agent.ReadOnlyDelegatePolicy (the M2-03
+// consolidation: M2-01's in-package delegateReadOnlyPolicy() was deleted and
+// both call sites re-pointed at agent.ReadOnlyDelegatePolicy). The shape is
+// asserted in full at the agent level (team_call_policy_test.go); this test
+// exists to lock the dependency direction — team must source the policy from
+// agent, not define its own copy.
+func TestReadOnlyDelegatePolicy_FromAgentPackage(t *testing.T) {
+	p := agent.ReadOnlyDelegatePolicy()
 
 	assert.Equal(t, "default", p.PermissionMode)
 	assert.ElementsMatch(t,

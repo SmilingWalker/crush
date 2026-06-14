@@ -118,25 +118,3 @@ func (g *DelegateRunGroup) TotalTokens() int64 {
 	}
 	return total
 }
-
-// delegateReadOnlyPolicy returns the read-only tool policy applied to every
-// delegate. Only the five read-only tools (view/grep/glob/ls/sourcegraph) are
-// allowed; destructive tools (bash/write/edit/agent/etc.) are disallowed.
-//
-// This is the M2-01 in-package helper (Seam 3): it lets the delegate runner
-// compile + test today without waiting for M2-03's exported
-// agent.ReadOnlyDelegatePolicy(). The shape is identical to the M2-03 spec
-// (03-m2-delegate-runner.md:411-422); if M2-03 later exports the agent-level
-// function, RunGroup can be switched to call it in a one-line change.
-func delegateReadOnlyPolicy() agent.ToolPolicyProfile {
-	return agent.ToolPolicyProfile{
-		AllowedTools: []string{"view", "grep", "glob", "ls", "sourcegraph"},
-		DisallowedTools: []string{
-			"agent", "ask_user_questions", "job_output", "job_kill",
-			"todos", "crush_info", "crush_logs",
-			"bash", "write", "edit", "multiedit", "download",
-			"fetch", "agentic_fetch",
-		},
-		PermissionMode: "default",
-	}
-}

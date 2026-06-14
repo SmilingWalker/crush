@@ -79,7 +79,7 @@ func (d *DelegateRunner) RunGroup(ctx context.Context, tasks []DelegateTask) *De
 	}
 
 	group.wg.Add(len(tasks))
-	policy := delegateReadOnlyPolicy()
+	policy := agent.ReadOnlyDelegatePolicy()
 
 	for i, task := range tasks {
 		go func(idx int, t DelegateTask) {
