@@ -344,3 +344,207 @@ func (r *recordingRunner) Run(_ context.Context, call agent.TeamAgentCall) (agen
 }
 func (r *recordingRunner) Cancel(_ string)             {}
 func (r *recordingRunner) IsSessionBusy(_ string) bool { return false }
+
+// TestDelegateRunner_CancelGroup_CancelsAllDelegates locks M2-02 acceptance #1
+// and #2: after CancelGroup, every in-flight delegate writes TurnCanceled into
+// its Results slot (the long-delay mock is preempted by ctx.Done()), and the
+// group's terminal Status is "canceled". The whole group settles within a
+// generous 2s bound (acceptance #1's "within 2 seconds") even though each
+// delegate's nominal delay is 30s.
+func TestDelegateRunner_CancelGroup_CancelsAllDelegates(t *testing.T) {
+	factory := &mockAgentFactory{
+		defaultDelay:  30 * time.Second, // far longer than the test budget
+		defaultResult: completedResult(),
+	}
+	runner := NewDelegateRunner(factory)
+
+	tasks := []DelegateTask{
+		{ID: "a", Prompt: "p", AgentID: "explore"},
+		{ID: "b", Prompt: "p", AgentID: "explore"},
+		{ID: "c", Prompt: "p", AgentID: "explore"},
+	}
+	group := runner.RunGroup(context.Background(), tasks)
+
+	// Give the goroutines a moment to enter their select/ctx.Done() wait.
+	time.Sleep(20 * time.Millisecond)
+
+	start := time.Now()
+	require.NoError(t, runner.CancelGroup(group.ID))
+	group.Wait()
+	elapsed := time.Since(start)
+
+	// Acceptance #1: settles well under 2s (cancel is near-instant; the mock
+	// returns on ctx.Done() immediately).
+	assert.Less(t, elapsed, 2*time.Second,
+		"canceled group took %v to settle; expected < 2s", elapsed)
+
+	// Acceptance #2: every slot is TurnCanceled.
+	require.Len(t, group.Results, 3)
+	for i, r := range group.Results {
+		assert.Equalf(t, agent.TurnCanceled, r.Status,
+			"slot %d (task %q) = %s, want TurnCanceled", i, r.TaskID, r.Status)
+	}
+	// The group's terminal status reflects the cancel.
+	assert.Equal(t, "canceled", group.Status)
+}
+
+// TestDelegateRunner_CancelGroup_Idempotent locks acceptance #3: calling
+// CancelGroup twice on the same group does not panic and the second call is a
+// no-op (returns nil). The group's Results remain TurnCanceled throughout.
+func TestDelegateRunner_CancelGroup_Idempotent(t *testing.T) {
+	factory := &mockAgentFactory{
+		defaultDelay:  30 * time.Second,
+		defaultResult: completedResult(),
+	}
+	runner := NewDelegateRunner(factory)
+
+	group := runner.RunGroup(context.Background(), []DelegateTask{
+		{ID: "1", Prompt: "p", AgentID: "explore"},
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	// First cancel: starts teardown.
+	require.NotPanics(t, func() { require.NoError(t, runner.CancelGroup(group.ID)) })
+	// Second cancel must be a safe no-op (the group is already flipping to
+	// "canceled"; cancel() is documented repeatable, and the status re-check
+	// short-circuits).
+	require.NotPanics(t, func() { require.NoError(t, runner.CancelGroup(group.ID)) })
+
+	group.Wait()
+	require.Len(t, group.Results, 1)
+	assert.Equal(t, agent.TurnCanceled, group.Results[0].Status)
+	assert.Equal(t, "canceled", group.Status)
+}
+
+// TestDelegateRunner_CancelGroup_UnknownID locks the error path: canceling a
+// group id the runner does not hold returns a non-nil error mentioning the id,
+// without panicking.
+func TestDelegateRunner_CancelGroup_UnknownID(t *testing.T) {
+	runner := NewDelegateRunner(&mockAgentFactory{defaultResult: completedResult()})
+	err := runner.CancelGroup("does-not-exist")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does-not-exist")
+}
+
+// TestDelegateRunner_CancelGroup_UnregistersGroup locks acceptance #4: after
+// cancel and Wait(), the runner no longer holds the group in its in-memory
+// registry (the trailing status-flip goroutine deletes it). Pure in-memory —
+// nothing persisted.
+func TestDelegateRunner_CancelGroup_UnregistersGroup(t *testing.T) {
+	factory := &mockAgentFactory{
+		defaultDelay:  30 * time.Second,
+		defaultResult: completedResult(),
+	}
+	runner := NewDelegateRunner(factory)
+
+	group := runner.RunGroup(context.Background(), []DelegateTask{
+		{ID: "1", Prompt: "p", AgentID: "explore"},
+	})
+	require.Equal(t, 1, runner.ActiveGroupCount())
+
+	require.NoError(t, runner.CancelGroup(group.ID))
+	group.Wait()
+
+	assert.Equal(t, 0, runner.ActiveGroupCount(),
+		"canceled group must be unregistered after Wait()")
+}
+
+// TestDelegateRunner_CancelAllGroups locks CancelAllGroups: every active group
+// is canceled (TurnCanceled across the board). Also serves as the deadlock
+// guard for Seam 4: if CancelAllGroups held d.mu while taking group.mu, this
+// test would hang under the trailing goroutine's lock order.
+func TestDelegateRunner_CancelAllGroups(t *testing.T) {
+	longFactory := &mockAgentFactory{
+		defaultDelay:  30 * time.Second,
+		defaultResult: completedResult(),
+	}
+	runner := NewDelegateRunner(longFactory)
+
+	group1 := runner.RunGroup(context.Background(), []DelegateTask{
+		{ID: "1a", Prompt: "p", AgentID: "explore"},
+		{ID: "1b", Prompt: "p", AgentID: "explore"},
+	})
+	group2 := runner.RunGroup(context.Background(), []DelegateTask{
+		{ID: "2a", Prompt: "p", AgentID: "explore"},
+	})
+	require.Equal(t, 2, runner.ActiveGroupCount())
+
+	// Give both groups' workers time to enter their ctx.Done() select.
+	time.Sleep(20 * time.Millisecond)
+
+	// CancelAllGroups must not deadlock against the trailing status-flip
+	// goroutines (Seam 4: snapshot-then-iterate, opposite lock order avoided).
+	done := make(chan struct{})
+	go func() {
+		runner.CancelAllGroups()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CancelAllGroups deadlocked (did not return within 2s)")
+	}
+
+	group1.Wait()
+	group2.Wait()
+
+	for _, r := range group1.Results {
+		assert.Equal(t, agent.TurnCanceled, r.Status)
+	}
+	for _, r := range group2.Results {
+		assert.Equal(t, agent.TurnCanceled, r.Status)
+	}
+	assert.Equal(t, "canceled", group1.Status)
+	assert.Equal(t, "canceled", group2.Status)
+	assert.Equal(t, 0, runner.ActiveGroupCount())
+}
+
+// TestDelegateRunner_CancelAllGroups_MixedWithCompletedGroups verifies Seam 4's
+// "skip already-terminal groups" clause on a SINGLE runner: a group that
+// finished naturally (TurnCompleted, Status "done") is already unregistered by
+// its trailing goroutine, so CancelAllGroups does not even see it; the
+// still-running group is canceled. No panic, no hang.
+func TestDelegateRunner_CancelAllGroups_MixedWithCompletedGroups(t *testing.T) {
+	// One runner, two AgentTypes: "fast" completes in a few ms; "long" runs
+	// 30s and is canceled by CancelAllGroups.
+	runner := NewDelegateRunner(&mockAgentFactory{
+		defaultDelay:  30 * time.Second,
+		defaultResult: completedResult(),
+		overrides: map[string]mockBehavior{
+			"fast": {delay: 5 * time.Millisecond, result: completedResult()},
+		},
+	})
+
+	// Start the fast group and let it complete naturally BEFORE we cancel.
+	fastGroup := runner.RunGroup(context.Background(), []DelegateTask{
+		{ID: "fast", Prompt: "p", AgentID: "fast"},
+	})
+	fastGroup.Wait()
+	assert.Equal(t, "done", fastGroup.Status)
+	assert.Equal(t, 0, runner.ActiveGroupCount(), "fast group unregistered after natural completion")
+
+	// Now a long group, then CancelAllGroups on the same runner.
+	longGroup := runner.RunGroup(context.Background(), []DelegateTask{
+		{ID: "long", Prompt: "p", AgentID: "explore"},
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		runner.CancelAllGroups()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CancelAllGroups deadlocked (did not return within 2s)")
+	}
+	longGroup.Wait()
+
+	// Fast group untouched by the cancel (it had already finished).
+	assert.Equal(t, agent.TurnCompleted, fastGroup.Results[0].Status)
+	// Long group canceled by the sweep.
+	assert.Equal(t, agent.TurnCanceled, longGroup.Results[0].Status)
+	assert.Equal(t, 0, runner.ActiveGroupCount())
+}
+

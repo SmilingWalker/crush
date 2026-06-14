@@ -267,3 +267,41 @@ func (d *DelegateRunner) cancelGroup(groupID string) error {
 	return nil
 }
 
+// CancelAllGroups cancels every active delegate group the runner currently
+// holds. Idempotent and safe to call concurrently with RunGroup / natural
+// completion. Groups that have already reached a terminal status ("done" or
+// "canceled") are left as-is; only "running" groups are flipped to "canceled"
+// and have their context canceled.
+//
+// Lock order (Seam 4): this method snapshots the groups under d.mu, releases
+// d.mu, then takes group.mu per group. This is the OPPOSITE order from the
+// trailing status-flip goroutine (group.mu then d.mu, delegate_runner.go
+// trailing goroutine), so the two can never form an AB-BA deadlock. Holding
+// d.mu across the per-group group.mu.Lock() would deadlock against the
+// trailing goroutine.
+func (d *DelegateRunner) CancelAllGroups() {
+	// Snapshot under d.mu; do NOT hold d.mu while taking group.mu (Seam 4).
+	d.mu.Lock()
+	groups := make([]*DelegateRunGroup, 0, len(d.groups))
+	for _, g := range d.groups {
+		groups = append(groups, g)
+	}
+	d.mu.Unlock()
+
+	for _, g := range groups {
+		g.mu.Lock()
+		if g.Status == "running" {
+			g.Status = "canceled"
+			g.mu.Unlock()
+			// Safe to cancel after releasing group.mu: cancel takes no group.mu.
+			g.cancel()
+			slog.Debug("canceled delegate group", "group_id", g.ID)
+		} else {
+			// Already terminal ("done" via natural completion, or "canceled"
+			// via a racing CancelGroup): leave it untouched.
+			g.mu.Unlock()
+		}
+	}
+}
+
+
