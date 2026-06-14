@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/google/uuid"
 )
 
@@ -100,32 +102,75 @@ func (c *coordinator) runSubAgentAsync(ctx context.Context, params subAgentParam
 			}
 		}()
 
+		start := time.Now()
+
+		// Publish the "running" lifecycle observation (acceptance #1).
+		// Non-blocking: Broker.Publish drops on a full subscriber buffer
+		// rather than backpressuring this goroutine (acceptance #4).
+		PublishAgentProgress(pubsub.UpdatedEvent, AgentProgressEvent{
+			RunID:        runID,
+			AgentType:    config.AgentTask,
+			State:        subAgentStateRunning,
+			ActivityDesc: "starting",
+			ElapsedMs:    0,
+		})
 		statusChan <- SubAgentStatus{State: subAgentStateRunning, Progress: "starting"}
 
-		start := time.Now()
 		resp, ar, err := c.runSubAgentStructured(ctx, params)
 		if ctx.Err() != nil {
+			c.publishTerminalProgress(runID, subAgentStateCanceled, "canceled", nil, start)
 			statusChan <- SubAgentStatus{State: subAgentStateCanceled, Error: ctx.Err()}
 			return
 		}
 		if err != nil {
 			state := subAgentStateError
+			desc := "error"
 			if errors.Is(err, context.Canceled) {
 				state = subAgentStateCanceled
+				desc = "canceled"
 			}
+			c.publishTerminalProgress(runID, state, desc, nil, start)
 			statusChan <- SubAgentStatus{State: state, Error: err}
 			return
 		}
 		// agent.Run failure: ar == nil, resp is an error ToolResponse. Surface
 		// as an error status (no structured Result).
 		if ar == nil {
+			c.publishTerminalProgress(runID, subAgentStateError, "failed", nil, start)
 			statusChan <- SubAgentStatus{State: subAgentStateError, Error: fmt.Errorf("sub-agent failed: %s", resp.Content)}
 			return
 		}
 
 		result := buildAgentToolResult(ar, config.AgentTask, start, c.sessions.CreateAgentToolSessionID(params.AgentMessageID, params.ToolCallID))
+		// Terminal "done" event with the real tool-call count, token total,
+		// last tool name, and elapsed time (acceptance #2/#3).
+		c.publishTerminalProgress(runID, subAgentStateDone, "completed", ar, start)
 		statusChan <- SubAgentStatus{State: subAgentStateDone, Result: &result}
 	}()
 
 	return handle, nil
+}
+
+// publishTerminalProgress publishes the terminal AgentProgressEvent for a
+// run. result is the *fantasy.AgentResult on success (nil for the
+// canceled/error/failed branches); when non-nil it contributes the real
+// tool-call count, token total, and last tool name. state is a subAgentState*
+// constant; desc is a human activity descriptor. ElapsedMs is measured from
+// start. Publication is non-blocking (acceptance #4) and stops after this
+// event (acceptance #3): the goroutine publishes exactly one start event
+// and one terminal event per run.
+func (c *coordinator) publishTerminalProgress(runID, state, desc string, result *fantasy.AgentResult, start time.Time) {
+	ev := AgentProgressEvent{
+		RunID:        runID,
+		AgentType:    config.AgentTask,
+		State:        state,
+		ActivityDesc: desc,
+		ElapsedMs:    time.Since(start).Milliseconds(),
+	}
+	if result != nil {
+		ev.ToolUseCount = countToolCalls(result)
+		ev.TokenCount = int(result.TotalUsage.InputTokens + result.TotalUsage.OutputTokens)
+		ev.LastToolName = lastToolName(result)
+	}
+	PublishAgentProgress(pubsub.UpdatedEvent, ev)
 }
