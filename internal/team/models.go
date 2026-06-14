@@ -10,11 +10,12 @@
 // uses SQLite-native types (int64 epoch millis, sql.NullInt64, bare string).
 // M3-04 owns the to<DomainType>(row) translation between the layers.
 //
-// This file depends only on the standard library (time, added in Task 2 once
-// the first struct lands). It does not import package db, sqlc output, or the
-// M2 delegate types.
+// This file depends only on the standard library (time). It does not import
+// package db, sqlc output, or the M2 delegate types.
 
 package team
+
+import "time"
 
 // TeamStatus is the lifecycle state of a Team. Gates teams.status
 // (migration 20260614000000_create_team_tables.sql:18, default 'created').
@@ -136,4 +137,50 @@ func (s RunStatus) Valid() bool {
 		}
 	}
 	return false
+}
+
+// Team is the domain representation of a teams row. Nullable columns
+// (max_cost/max_tokens/archived_at) are *int64/*time.Time so the nil case is
+// distinguishable from a zero value; timestamps are time.Time (sqlc stores
+// them as int64 epoch millis; M3-04 converts via time.UnixMilli).
+type Team struct {
+	ID              string     `json:"id"`
+	WorkspaceID     string     `json:"workspace_id"`
+	LeaderSessionID string     `json:"leader_session_id"`
+	Name            string     `json:"name"`
+	Description     string     `json:"description,omitempty"`
+	Status          TeamStatus `json:"status"`
+	Version         int        `json:"version"`
+	MaxCost         *int64     `json:"max_cost,omitempty"`
+	MaxTokens       *int64     `json:"max_tokens,omitempty"`
+	CostSoFarMicros int64      `json:"cost_so_far_micros"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	ArchivedAt      *time.Time `json:"archived_at,omitempty"`
+}
+
+// TeamMember is the domain representation of a team_members row. Nullable
+// TEXT/INTEGER columns are pointers; version/last_event_seq/cost_so_far_micros
+// are non-null so they stay plain int64.
+type TeamMember struct {
+	ID              string       `json:"id"`
+	TeamID          string       `json:"team_id"`
+	SessionID       *string      `json:"session_id,omitempty"`
+	Name            string       `json:"name"`
+	Role            string       `json:"role"`
+	AgentProfile    string       `json:"agent_profile"` // JSON blob; opaque to domain
+	ModelProvider   *string      `json:"model_provider,omitempty"`
+	ModelName       *string      `json:"model_name,omitempty"`
+	Status          MemberStatus `json:"status"`
+	CurrentTaskID   *string      `json:"current_task_id,omitempty"`
+	CurrentRunID    *string      `json:"current_run_id,omitempty"`
+	CurrentToolName *string      `json:"current_tool_name,omitempty"`
+	LastEventSeq    int64        `json:"last_event_seq"`
+	MaxCost         *int64       `json:"max_cost,omitempty"`
+	MaxTokens       *int64       `json:"max_tokens,omitempty"`
+	CostSoFarMicros int64        `json:"cost_so_far_micros"`
+	Version         int          `json:"version"`
+	CreatedAt       time.Time    `json:"created_at"`
+	UpdatedAt       time.Time    `json:"updated_at"`
+	StoppedAt       *time.Time   `json:"stopped_at,omitempty"`
 }
