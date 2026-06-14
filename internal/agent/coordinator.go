@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
@@ -32,8 +33,8 @@ import (
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/charmbracelet/crush/internal/permission"
-	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
 	"golang.org/x/sync/errgroup"
@@ -106,6 +107,10 @@ type coordinator struct {
 	activeSkills []*skills.Skill // Post-filter: active skills only.
 	skillTracker *skills.Tracker
 
+	// M1-05: in-flight async sub-agent runs, keyed by RunID.
+	activeSubAgents   map[string]*activeSubAgent
+	activeSubAgentsMu sync.RWMutex
+
 	readyWg errgroup.Group
 }
 
@@ -136,19 +141,20 @@ func NewCoordinator(
 	skillTracker := skills.NewTracker(activeSkills)
 
 	c := &coordinator{
-		cfg:          cfg,
-		sessions:     sessions,
-		messages:     messages,
-		permissions:  permissions,
-		questions:    questions,
-		history:      history,
-		filetracker:  filetracker,
-		lspManager:   lspManager,
-		notify:       notify,
-		agents:       make(map[string]SessionAgent),
-		allSkills:    allSkills,
-		activeSkills: activeSkills,
-		skillTracker: skillTracker,
+		cfg:             cfg,
+		sessions:        sessions,
+		messages:        messages,
+		permissions:     permissions,
+		questions:       questions,
+		history:         history,
+		filetracker:     filetracker,
+		lspManager:      lspManager,
+		notify:          notify,
+		agents:          make(map[string]SessionAgent),
+		allSkills:       allSkills,
+		activeSkills:    activeSkills,
+		skillTracker:    skillTracker,
+		activeSubAgents: make(map[string]*activeSubAgent),
 	}
 
 	agentCfg, ok := cfg.Config().Agents[config.AgentCoder]
@@ -962,10 +968,26 @@ func isExactoSupported(modelID string) bool {
 
 func (c *coordinator) Cancel(sessionID string) {
 	c.currentAgent.Cancel(sessionID)
+
+	// M1-05: also cancel any in-flight async sub-agents owned by this session.
+	c.activeSubAgentsMu.RLock()
+	defer c.activeSubAgentsMu.RUnlock()
+	for _, asa := range c.activeSubAgents {
+		if asa.sessionID == sessionID {
+			asa.cancel()
+		}
+	}
 }
 
 func (c *coordinator) CancelAll() {
 	c.currentAgent.CancelAll()
+
+	// M1-05: also cancel every in-flight async sub-agent.
+	c.activeSubAgentsMu.RLock()
+	defer c.activeSubAgentsMu.RUnlock()
+	for _, asa := range c.activeSubAgents {
+		asa.cancel()
+	}
 }
 
 func (c *coordinator) ClearQueue(sessionID string) {
