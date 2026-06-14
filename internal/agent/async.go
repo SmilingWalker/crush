@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 
 	"charm.land/fantasy"
+	"github.com/google/uuid"
 )
 
 // async sub-agent run states reported on SubAgentStatus.State.
@@ -39,4 +41,57 @@ type SubAgentStatus struct {
 type activeSubAgent struct {
 	cancel    context.CancelFunc
 	sessionID string
+}
+
+// runSubAgentAsync launches params in a background goroutine and returns a
+// SubAgentHandle immediately (non-blocking). The goroutine runs the existing
+// sync pipeline (runSubAgent) on a derived cancellable context, streams status
+// onto handle.StatusChan, and unregisters itself on exit.
+//
+// A run is classified as "canceled" when ctx.Err() is non-nil after runSubAgent
+// returns — runSubAgent itself swallows agent.Run failures into an error
+// response with err == nil, so ctx.Err() is the reliable signal.
+func (c *coordinator) runSubAgentAsync(ctx context.Context, params subAgentParams) (SubAgentHandle, error) {
+	runID := uuid.New().String()
+	ctx, cancel := context.WithCancel(ctx)
+
+	c.activeSubAgentsMu.Lock()
+	c.activeSubAgents[runID] = &activeSubAgent{cancel: cancel, sessionID: params.SessionID}
+	c.activeSubAgentsMu.Unlock()
+
+	statusChan := make(chan SubAgentStatus, 10)
+	handle := SubAgentHandle{
+		RunID:      runID,
+		StatusChan: statusChan,
+		Cancel:     cancel,
+	}
+
+	go func() {
+		defer close(statusChan)
+		defer func() {
+			c.activeSubAgentsMu.Lock()
+			delete(c.activeSubAgents, runID)
+			c.activeSubAgentsMu.Unlock()
+		}()
+
+		statusChan <- SubAgentStatus{State: subAgentStateRunning, Progress: "starting"}
+
+		result, err := c.runSubAgent(ctx, params)
+		if ctx.Err() != nil {
+			statusChan <- SubAgentStatus{State: subAgentStateCanceled, Error: ctx.Err()}
+			return
+		}
+		if err != nil {
+			state := subAgentStateError
+			if errors.Is(err, context.Canceled) {
+				state = subAgentStateCanceled
+			}
+			statusChan <- SubAgentStatus{State: state, Error: err}
+			return
+		}
+
+		statusChan <- SubAgentStatus{State: subAgentStateDone, Result: &result}
+	}()
+
+	return handle, nil
 }
