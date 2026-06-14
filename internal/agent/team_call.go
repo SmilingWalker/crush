@@ -44,6 +44,32 @@ type ToolPolicyProfile struct {
 	PermissionMode  string   // default | acceptEdits | plan | bypassPermissions
 }
 
+// ReadOnlyDelegatePolicy 返回M2 delegate的只读工具策略。
+// 仅允许 view/grep/glob/ls/sourcegraph 五个只读工具；破坏性工具
+// (bash/write/edit/agent 等) 被禁止。
+//
+// 白名单语义为"仅允许这些"：coordinator 的工具过滤器
+// (!slices.Contains(AllowedTools, name) → skip) 会让任何不在 AllowedTools
+// 中的工具被跳过。DisallowedTools 是破坏性子集的 defense-in-depth——两层
+// 都必须满足后 delegate 才会到达真实 LLM。生产 AgentFactory（尚未落地）
+// 负责把该 ToolPolicyProfile 映射到构建 runner 的 config；在它落地前，本
+// 函数仅定义策略字面量。
+//
+// 5 个 allowlist 条目和所有 disallow 条目均已对照
+// internal/agent/tools/*.go 的真实 tool 注册验证（见 team_call_policy_test.go）。
+func ReadOnlyDelegatePolicy() ToolPolicyProfile {
+	return ToolPolicyProfile{
+		AllowedTools: []string{"view", "grep", "glob", "ls", "sourcegraph"},
+		DisallowedTools: []string{
+			"agent", "ask_user_questions", "job_output", "job_kill",
+			"todos", "crush_info", "crush_logs",
+			"bash", "write", "edit", "multiedit", "download",
+			"fetch", "agentic_fetch",
+		},
+		PermissionMode: "default",
+	}
+}
+
 // TurnRunResult 是一轮 agent turn 的结果
 // Status 为 queued 时 Result 为 nil（表示已入队但尚未执行）
 type TurnRunResult struct {
