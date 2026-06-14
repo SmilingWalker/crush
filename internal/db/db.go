@@ -135,6 +135,45 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateSessionTitleAndUsageStmt, err = db.PrepareContext(ctx, updateSessionTitleAndUsage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSessionTitleAndUsage: %w", err)
 	}
+	if q.archiveTeamStmt, err = db.PrepareContext(ctx, archiveTeam); err != nil {
+		return nil, fmt.Errorf("error preparing query ArchiveTeam: %w", err)
+	}
+	if q.claimNextTaskStmt, err = db.PrepareContext(ctx, claimNextTask); err != nil {
+		return nil, fmt.Errorf("error preparing query ClaimNextTask: %w", err)
+	}
+	if q.findStaleRunsStmt, err = db.PrepareContext(ctx, findStaleRuns); err != nil {
+		return nil, fmt.Errorf("error preparing query FindStaleRuns: %w", err)
+	}
+	if q.finishRunStmt, err = db.PrepareContext(ctx, finishRun); err != nil {
+		return nil, fmt.Errorf("error preparing query FinishRun: %w", err)
+	}
+	if q.getTeamStmt, err = db.PrepareContext(ctx, getTeam); err != nil {
+		return nil, fmt.Errorf("error preparing query GetTeam: %w", err)
+	}
+	if q.insertEventStmt, err = db.PrepareContext(ctx, insertEvent); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertEvent: %w", err)
+	}
+	if q.insertTeamStmt, err = db.PrepareContext(ctx, insertTeam); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertTeam: %w", err)
+	}
+	if q.listEventsAfterStmt, err = db.PrepareContext(ctx, listEventsAfter); err != nil {
+		return nil, fmt.Errorf("error preparing query ListEventsAfter: %w", err)
+	}
+	if q.listTeamsStmt, err = db.PrepareContext(ctx, listTeams); err != nil {
+		return nil, fmt.Errorf("error preparing query ListTeams: %w", err)
+	}
+	if q.markRunTerminalStmt, err = db.PrepareContext(ctx, markRunTerminal); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkRunTerminal: %w", err)
+	}
+	if q.nextEventSeqStmt, err = db.PrepareContext(ctx, nextEventSeq); err != nil {
+		return nil, fmt.Errorf("error preparing query NextEventSeq: %w", err)
+	}
+	if q.updateRunHeartbeatStmt, err = db.PrepareContext(ctx, updateRunHeartbeat); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateRunHeartbeat: %w", err)
+	}
+	if q.updateTaskCASStmt, err = db.PrepareContext(ctx, updateTaskCAS); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateTaskCAS: %w", err)
+	}
 	return &q, nil
 }
 
@@ -325,6 +364,71 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateSessionTitleAndUsageStmt: %w", cerr)
 		}
 	}
+	if q.archiveTeamStmt != nil {
+		if cerr := q.archiveTeamStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing archiveTeamStmt: %w", cerr)
+		}
+	}
+	if q.claimNextTaskStmt != nil {
+		if cerr := q.claimNextTaskStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing claimNextTaskStmt: %w", cerr)
+		}
+	}
+	if q.findStaleRunsStmt != nil {
+		if cerr := q.findStaleRunsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing findStaleRunsStmt: %w", cerr)
+		}
+	}
+	if q.finishRunStmt != nil {
+		if cerr := q.finishRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing finishRunStmt: %w", cerr)
+		}
+	}
+	if q.getTeamStmt != nil {
+		if cerr := q.getTeamStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getTeamStmt: %w", cerr)
+		}
+	}
+	if q.insertEventStmt != nil {
+		if cerr := q.insertEventStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertEventStmt: %w", cerr)
+		}
+	}
+	if q.insertTeamStmt != nil {
+		if cerr := q.insertTeamStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertTeamStmt: %w", cerr)
+		}
+	}
+	if q.listEventsAfterStmt != nil {
+		if cerr := q.listEventsAfterStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listEventsAfterStmt: %w", cerr)
+		}
+	}
+	if q.listTeamsStmt != nil {
+		if cerr := q.listTeamsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listTeamsStmt: %w", cerr)
+		}
+	}
+	if q.markRunTerminalStmt != nil {
+		if cerr := q.markRunTerminalStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markRunTerminalStmt: %w", cerr)
+		}
+	}
+	if q.nextEventSeqStmt != nil {
+		if cerr := q.nextEventSeqStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing nextEventSeqStmt: %w", cerr)
+		}
+	}
+	if q.updateRunHeartbeatStmt != nil {
+		if cerr := q.updateRunHeartbeatStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateRunHeartbeatStmt: %w", cerr)
+		}
+	}
+	if q.updateTaskCASStmt != nil {
+		if cerr := q.updateTaskCASStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateTaskCASStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -401,6 +505,19 @@ type Queries struct {
 	updateMessageStmt              *sql.Stmt
 	updateSessionStmt              *sql.Stmt
 	updateSessionTitleAndUsageStmt *sql.Stmt
+	archiveTeamStmt                *sql.Stmt
+	claimNextTaskStmt              *sql.Stmt
+	findStaleRunsStmt              *sql.Stmt
+	finishRunStmt                  *sql.Stmt
+	getTeamStmt                    *sql.Stmt
+	insertEventStmt                *sql.Stmt
+	insertTeamStmt                 *sql.Stmt
+	listEventsAfterStmt            *sql.Stmt
+	listTeamsStmt                  *sql.Stmt
+	markRunTerminalStmt            *sql.Stmt
+	nextEventSeqStmt               *sql.Stmt
+	updateRunHeartbeatStmt         *sql.Stmt
+	updateTaskCASStmt              *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -444,5 +561,18 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		updateMessageStmt:              q.updateMessageStmt,
 		updateSessionStmt:              q.updateSessionStmt,
 		updateSessionTitleAndUsageStmt: q.updateSessionTitleAndUsageStmt,
+		archiveTeamStmt:                q.archiveTeamStmt,
+		claimNextTaskStmt:              q.claimNextTaskStmt,
+		findStaleRunsStmt:              q.findStaleRunsStmt,
+		finishRunStmt:                  q.finishRunStmt,
+		getTeamStmt:                    q.getTeamStmt,
+		insertEventStmt:                q.insertEventStmt,
+		insertTeamStmt:                 q.insertTeamStmt,
+		listEventsAfterStmt:            q.listEventsAfterStmt,
+		listTeamsStmt:                  q.listTeamsStmt,
+		markRunTerminalStmt:            q.markRunTerminalStmt,
+		nextEventSeqStmt:               q.nextEventSeqStmt,
+		updateRunHeartbeatStmt:         q.updateRunHeartbeatStmt,
+		updateTaskCASStmt:              q.updateTaskCASStmt,
 	}
 }

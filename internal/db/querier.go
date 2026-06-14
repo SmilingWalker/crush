@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
@@ -46,6 +47,19 @@ type Querier interface {
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
 	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
+	ArchiveTeam(ctx context.Context, arg ArchiveTeamParams) error
+	ClaimNextTask(ctx context.Context, arg ClaimNextTaskParams) (TeamTask, error)
+	FindStaleRuns(ctx context.Context, heartbeatAt sql.NullInt64) ([]TeamRun, error)
+	FinishRun(ctx context.Context, arg FinishRunParams) error
+	GetTeam(ctx context.Context, id string) (Team, error)
+	InsertEvent(ctx context.Context, arg InsertEventParams) error
+	InsertTeam(ctx context.Context, arg InsertTeamParams) (Team, error)
+	ListEventsAfter(ctx context.Context, arg ListEventsAfterParams) ([]TeamEvent, error)
+	ListTeams(ctx context.Context, workspaceID string) ([]Team, error)
+	MarkRunTerminal(ctx context.Context, arg MarkRunTerminalParams) error
+	NextEventSeq(ctx context.Context, arg NextEventSeqParams) (int64, error)
+	UpdateRunHeartbeat(ctx context.Context, arg UpdateRunHeartbeatParams) error
+	UpdateTaskCAS(ctx context.Context, arg UpdateTaskCASParams) (TeamTask, error)
 }
 
 var _ Querier = (*Queries)(nil)
