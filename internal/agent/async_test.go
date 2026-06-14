@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -109,4 +111,70 @@ func TestRunSubAgentAsync_DoneEmitsRunningThenDone(t *testing.T) {
 	require.NotNil(t, last.Result)
 	assert.Equal(t, "all good", last.Result.Content)
 	assert.False(t, last.Result.IsError)
+}
+
+// TestRunSubAgentAsync_CancelEmitsCanceledWithin5s locks acceptance #3 and #7:
+// after Cancel, the goroutine exits and reports "canceled" within 5 seconds.
+func TestRunSubAgentAsync_CancelEmitsCanceledWithin5s(t *testing.T) {
+	env := testEnv(t)
+	coord := newTestCoordinator(t, env, "test-provider", setupProviderConfig("test-provider"))
+
+	parent, err := env.sessions.Create(t.Context(), "Parent")
+	require.NoError(t, err)
+
+	started := make(chan struct{})
+	handle := startAsyncSubAgent(t, env, coord, parent.ID, func(ctx context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	<-started // ensure the goroutine is inside runFunc before canceling
+	handle.Cancel()
+
+	done := make(chan []SubAgentStatus, 1)
+	go func() { done <- drainStatus(t, handle) }()
+	select {
+	case got := <-done:
+		last := got[len(got)-1]
+		assert.Equal(t, subAgentStateCanceled, last.State)
+		require.Error(t, last.Error)
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel did not stop the goroutine within 5s")
+	}
+}
+
+// TestRunSubAgentAsync_NoGoroutineLeak locks acceptance #5: after 100
+// async runs each canceled and drained, goroutine count returns near baseline.
+func TestRunSubAgentAsync_NoGoroutineLeak(t *testing.T) {
+	env := testEnv(t)
+	coord := newTestCoordinator(t, env, "test-provider", setupProviderConfig("test-provider"))
+
+	parent, err := env.sessions.Create(t.Context(), "Parent")
+	require.NoError(t, err)
+
+	before := runtime.NumGoroutine()
+
+	const n = 100
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			handle := startAsyncSubAgent(t, env, coord, parent.ID, func(ctx context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			})
+			handle.Cancel()
+			drainStatus(t, handle) // wait for goroutine exit
+		}()
+	}
+	wg.Wait()
+
+	// Give exited goroutines a moment to be reaped.
+	time.Sleep(200 * time.Millisecond)
+	runtime.GC()
+
+	after := runtime.NumGoroutine()
+	assert.LessOrEqual(t, after, before+5, "goroutine leak: before=%d after=%d", before, after)
 }
