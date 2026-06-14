@@ -76,3 +76,46 @@ WHERE id = ? AND team_id = ? AND status = ?;
 SELECT * FROM team_runs
 WHERE status IN ('running', 'waiting_permission', 'queued')
   AND heartbeat_at < ?;
+
+-- name: InsertMember :one
+INSERT INTO team_members (id, team_id, session_id, name, role, agent_profile, model_provider, model_name, status, current_task_id, current_run_id, current_tool_name, last_event_seq, max_cost, max_tokens, cost_so_far_micros, version, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, 0, ?, ?, 0, 1, ?, ?)
+RETURNING *;
+
+-- name: GetMember :one
+SELECT * FROM team_members WHERE id = ? LIMIT 1;
+
+-- name: ListMembers :many
+SELECT * FROM team_members WHERE team_id = ? ORDER BY created_at ASC;
+
+-- name: UpdateMemberCAS :one
+UPDATE team_members
+SET status = ?, current_task_id = ?, current_run_id = ?, current_tool_name = ?, last_event_seq = ?, version = version + 1, updated_at = ?
+WHERE id = ? AND team_id = ? AND version = ?
+RETURNING *;
+
+-- name: InsertTask :one
+INSERT INTO team_tasks (id, team_id, title, description, status, assignee_member_id, created_by_member_id, priority, version, created_at, updated_at)
+VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, 1, ?, ?)
+RETURNING *;
+
+-- name: GetTask :one
+SELECT * FROM team_tasks WHERE id = ? AND team_id = ? LIMIT 1;
+
+-- name: ListTasks :many
+SELECT * FROM team_tasks WHERE team_id = ? ORDER BY priority DESC, created_at ASC;
+
+-- name: InsertRun :one
+INSERT INTO team_runs (id, team_id, member_id, task_id, session_id, status, attempt, heartbeat_at, started_at)
+VALUES (?, ?, ?, ?, ?, 'queued', 1, ?, ?)
+RETURNING *;
+
+-- name: GetRun :one
+SELECT * FROM team_runs WHERE id = ? AND team_id = ? LIMIT 1;
+
+-- name: InsertAudit :exec
+INSERT INTO team_audit_events (id, workspace_id, team_id, member_id, task_id, run_id, session_id, tool_call_id, event_type, action, resource_type, resource_ref, input_hash, summary, decision, scope, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: ListAudit :many
+SELECT * FROM team_audit_events WHERE team_id = ? ORDER BY created_at DESC LIMIT ?;

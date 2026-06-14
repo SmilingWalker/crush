@@ -60,6 +60,17 @@ type Querier interface {
 	NextEventSeq(ctx context.Context, arg NextEventSeqParams) (int64, error)
 	UpdateRunHeartbeat(ctx context.Context, arg UpdateRunHeartbeatParams) error
 	UpdateTaskCAS(ctx context.Context, arg UpdateTaskCASParams) (TeamTask, error)
+	InsertMember(ctx context.Context, arg InsertMemberParams) (TeamMember, error)
+	GetMember(ctx context.Context, id string) (TeamMember, error)
+	ListMembers(ctx context.Context, teamID string) ([]TeamMember, error)
+	UpdateMemberCAS(ctx context.Context, arg UpdateMemberCASParams) (TeamMember, error)
+	InsertTask(ctx context.Context, arg InsertTaskParams) (TeamTask, error)
+	GetTask(ctx context.Context, arg GetTaskParams) (TeamTask, error)
+	ListTasks(ctx context.Context, teamID string) ([]TeamTask, error)
+	InsertRun(ctx context.Context, arg InsertRunParams) (TeamRun, error)
+	GetRun(ctx context.Context, arg GetRunParams) (TeamRun, error)
+	InsertAudit(ctx context.Context, arg InsertAuditParams) error
+	ListAudit(ctx context.Context, arg ListAuditParams) ([]TeamAuditEvent, error)
 }
 
 var _ Querier = (*Queries)(nil)

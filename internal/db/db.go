@@ -174,6 +174,39 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateTaskCASStmt, err = db.PrepareContext(ctx, updateTaskCAS); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateTaskCAS: %w", err)
 	}
+	if q.insertMemberStmt, err = db.PrepareContext(ctx, insertMember); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertMember: %w", err)
+	}
+	if q.getMemberStmt, err = db.PrepareContext(ctx, getMember); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMember: %w", err)
+	}
+	if q.listMembersStmt, err = db.PrepareContext(ctx, listMembers); err != nil {
+		return nil, fmt.Errorf("error preparing query ListMembers: %w", err)
+	}
+	if q.updateMemberCASStmt, err = db.PrepareContext(ctx, updateMemberCAS); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateMemberCAS: %w", err)
+	}
+	if q.insertTaskStmt, err = db.PrepareContext(ctx, insertTask); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertTask: %w", err)
+	}
+	if q.getTaskStmt, err = db.PrepareContext(ctx, getTask); err != nil {
+		return nil, fmt.Errorf("error preparing query GetTask: %w", err)
+	}
+	if q.listTasksStmt, err = db.PrepareContext(ctx, listTasks); err != nil {
+		return nil, fmt.Errorf("error preparing query ListTasks: %w", err)
+	}
+	if q.insertRunStmt, err = db.PrepareContext(ctx, insertRun); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertRun: %w", err)
+	}
+	if q.getRunStmt, err = db.PrepareContext(ctx, getRun); err != nil {
+		return nil, fmt.Errorf("error preparing query GetRun: %w", err)
+	}
+	if q.insertAuditStmt, err = db.PrepareContext(ctx, insertAudit); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertAudit: %w", err)
+	}
+	if q.listAuditStmt, err = db.PrepareContext(ctx, listAudit); err != nil {
+		return nil, fmt.Errorf("error preparing query ListAudit: %w", err)
+	}
 	return &q, nil
 }
 
@@ -429,6 +462,61 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateTaskCASStmt: %w", cerr)
 		}
 	}
+	if q.insertMemberStmt != nil {
+		if cerr := q.insertMemberStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertMemberStmt: %w", cerr)
+		}
+	}
+	if q.getMemberStmt != nil {
+		if cerr := q.getMemberStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMemberStmt: %w", cerr)
+		}
+	}
+	if q.listMembersStmt != nil {
+		if cerr := q.listMembersStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listMembersStmt: %w", cerr)
+		}
+	}
+	if q.updateMemberCASStmt != nil {
+		if cerr := q.updateMemberCASStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateMemberCASStmt: %w", cerr)
+		}
+	}
+	if q.insertTaskStmt != nil {
+		if cerr := q.insertTaskStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertTaskStmt: %w", cerr)
+		}
+	}
+	if q.getTaskStmt != nil {
+		if cerr := q.getTaskStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getTaskStmt: %w", cerr)
+		}
+	}
+	if q.listTasksStmt != nil {
+		if cerr := q.listTasksStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listTasksStmt: %w", cerr)
+		}
+	}
+	if q.insertRunStmt != nil {
+		if cerr := q.insertRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertRunStmt: %w", cerr)
+		}
+	}
+	if q.getRunStmt != nil {
+		if cerr := q.getRunStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getRunStmt: %w", cerr)
+		}
+	}
+	if q.insertAuditStmt != nil {
+		if cerr := q.insertAuditStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertAuditStmt: %w", cerr)
+		}
+	}
+	if q.listAuditStmt != nil {
+		if cerr := q.listAuditStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listAuditStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -518,6 +606,17 @@ type Queries struct {
 	nextEventSeqStmt               *sql.Stmt
 	updateRunHeartbeatStmt         *sql.Stmt
 	updateTaskCASStmt              *sql.Stmt
+	insertMemberStmt               *sql.Stmt
+	getMemberStmt                  *sql.Stmt
+	listMembersStmt                *sql.Stmt
+	updateMemberCASStmt            *sql.Stmt
+	insertTaskStmt                 *sql.Stmt
+	getTaskStmt                    *sql.Stmt
+	listTasksStmt                  *sql.Stmt
+	insertRunStmt                  *sql.Stmt
+	getRunStmt                     *sql.Stmt
+	insertAuditStmt                *sql.Stmt
+	listAuditStmt                  *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -574,5 +673,16 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		nextEventSeqStmt:               q.nextEventSeqStmt,
 		updateRunHeartbeatStmt:         q.updateRunHeartbeatStmt,
 		updateTaskCASStmt:              q.updateTaskCASStmt,
+		insertMemberStmt:               q.insertMemberStmt,
+		getMemberStmt:                  q.getMemberStmt,
+		listMembersStmt:                q.listMembersStmt,
+		updateMemberCASStmt:            q.updateMemberCASStmt,
+		insertTaskStmt:                 q.insertTaskStmt,
+		getTaskStmt:                    q.getTaskStmt,
+		listTasksStmt:                  q.listTasksStmt,
+		insertRunStmt:                  q.insertRunStmt,
+		getRunStmt:                     q.getRunStmt,
+		insertAuditStmt:                q.insertAuditStmt,
+		listAuditStmt:                  q.listAuditStmt,
 	}
 }

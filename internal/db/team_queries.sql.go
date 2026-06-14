@@ -463,3 +463,309 @@ func (q *Queries) UpdateTaskCAS(ctx context.Context, arg UpdateTaskCASParams) (T
 	)
 	return i, err
 }
+
+const insertMember = `-- name: InsertMember :one
+INSERT INTO team_members (id, team_id, session_id, name, role, agent_profile, model_provider, model_name, status, current_task_id, current_run_id, current_tool_name, last_event_seq, max_cost, max_tokens, cost_so_far_micros, version, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, 0, ?, ?, 0, 1, ?, ?)
+RETURNING id, team_id, session_id, name, role, agent_profile, model_provider, model_name, status, current_task_id, current_run_id, current_tool_name, last_event_seq, max_cost, max_tokens, cost_so_far_micros, version, created_at, updated_at, stopped_at
+`
+
+type InsertMemberParams struct {
+	ID              string         `json:"id"`
+	TeamID          string         `json:"team_id"`
+	SessionID       sql.NullString `json:"session_id"`
+	Name            string         `json:"name"`
+	Role            string         `json:"role"`
+	AgentProfile    string         `json:"agent_profile"`
+	ModelProvider   sql.NullString `json:"model_provider"`
+	ModelName       sql.NullString `json:"model_name"`
+	CurrentTaskID   sql.NullString `json:"current_task_id"`
+	CurrentRunID    sql.NullString `json:"current_run_id"`
+	CurrentToolName sql.NullString `json:"current_tool_name"`
+	MaxCost         sql.NullInt64  `json:"max_cost"`
+	MaxTokens       sql.NullInt64  `json:"max_tokens"`
+	CreatedAt       int64          `json:"created_at"`
+	UpdatedAt       int64          `json:"updated_at"`
+}
+
+func (q *Queries) InsertMember(ctx context.Context, arg InsertMemberParams) (TeamMember, error) {
+	row := q.queryRow(ctx, q.insertMemberStmt, insertMember,
+		arg.ID, arg.TeamID, arg.SessionID, arg.Name, arg.Role, arg.AgentProfile, arg.ModelProvider, arg.ModelName, arg.CurrentTaskID, arg.CurrentRunID, arg.CurrentToolName, arg.MaxCost, arg.MaxTokens, arg.CreatedAt, arg.UpdatedAt,
+	)
+	var i TeamMember
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.SessionID, &i.Name, &i.Role, &i.AgentProfile, &i.ModelProvider, &i.ModelName, &i.Status, &i.CurrentTaskID, &i.CurrentRunID, &i.CurrentToolName, &i.LastEventSeq, &i.MaxCost, &i.MaxTokens, &i.CostSoFarMicros, &i.Version, &i.CreatedAt, &i.UpdatedAt, &i.StoppedAt,
+	)
+	return i, err
+}
+
+const getMember = `-- name: GetMember :one
+SELECT id, team_id, session_id, name, role, agent_profile, model_provider, model_name, status, current_task_id, current_run_id, current_tool_name, last_event_seq, max_cost, max_tokens, cost_so_far_micros, version, created_at, updated_at, stopped_at
+FROM team_members
+WHERE id = ? LIMIT 1
+`
+
+func (q *Queries) GetMember(ctx context.Context, id string) (TeamMember, error) {
+	row := q.queryRow(ctx, q.getMemberStmt, getMember, id)
+	var i TeamMember
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.SessionID, &i.Name, &i.Role, &i.AgentProfile, &i.ModelProvider, &i.ModelName, &i.Status, &i.CurrentTaskID, &i.CurrentRunID, &i.CurrentToolName, &i.LastEventSeq, &i.MaxCost, &i.MaxTokens, &i.CostSoFarMicros, &i.Version, &i.CreatedAt, &i.UpdatedAt, &i.StoppedAt,
+	)
+	return i, err
+}
+
+const listMembers = `-- name: ListMembers :many
+SELECT id, team_id, session_id, name, role, agent_profile, model_provider, model_name, status, current_task_id, current_run_id, current_tool_name, last_event_seq, max_cost, max_tokens, cost_so_far_micros, version, created_at, updated_at, stopped_at
+FROM team_members
+WHERE team_id = ? ORDER BY created_at ASC
+`
+
+func (q *Queries) ListMembers(ctx context.Context, teamID string) ([]TeamMember, error) {
+	rows, err := q.query(ctx, q.listMembersStmt, listMembers, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TeamMember{}
+	for rows.Next() {
+		var i TeamMember
+		if err := rows.Scan(
+			&i.ID, &i.TeamID, &i.SessionID, &i.Name, &i.Role, &i.AgentProfile, &i.ModelProvider, &i.ModelName, &i.Status, &i.CurrentTaskID, &i.CurrentRunID, &i.CurrentToolName, &i.LastEventSeq, &i.MaxCost, &i.MaxTokens, &i.CostSoFarMicros, &i.Version, &i.CreatedAt, &i.UpdatedAt, &i.StoppedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateMemberCAS = `-- name: UpdateMemberCAS :one
+UPDATE team_members
+SET status = ?, current_task_id = ?, current_run_id = ?, current_tool_name = ?, last_event_seq = ?, version = version + 1, updated_at = ?
+WHERE id = ? AND team_id = ? AND version = ?
+RETURNING id, team_id, session_id, name, role, agent_profile, model_provider, model_name, status, current_task_id, current_run_id, current_tool_name, last_event_seq, max_cost, max_tokens, cost_so_far_micros, version, created_at, updated_at, stopped_at
+`
+
+type UpdateMemberCASParams struct {
+	Status          string         `json:"status"`
+	CurrentTaskID   sql.NullString `json:"current_task_id"`
+	CurrentRunID    sql.NullString `json:"current_run_id"`
+	CurrentToolName sql.NullString `json:"current_tool_name"`
+	LastEventSeq    int64          `json:"last_event_seq"`
+	UpdatedAt       int64          `json:"updated_at"`
+	ID              string         `json:"id"`
+	TeamID          string         `json:"team_id"`
+	Version         int64          `json:"version"`
+}
+
+func (q *Queries) UpdateMemberCAS(ctx context.Context, arg UpdateMemberCASParams) (TeamMember, error) {
+	row := q.queryRow(ctx, q.updateMemberCASStmt, updateMemberCAS,
+		arg.Status, arg.CurrentTaskID, arg.CurrentRunID, arg.CurrentToolName, arg.LastEventSeq, arg.UpdatedAt, arg.ID, arg.TeamID, arg.Version,
+	)
+	var i TeamMember
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.SessionID, &i.Name, &i.Role, &i.AgentProfile, &i.ModelProvider, &i.ModelName, &i.Status, &i.CurrentTaskID, &i.CurrentRunID, &i.CurrentToolName, &i.LastEventSeq, &i.MaxCost, &i.MaxTokens, &i.CostSoFarMicros, &i.Version, &i.CreatedAt, &i.UpdatedAt, &i.StoppedAt,
+	)
+	return i, err
+}
+
+const insertTask = `-- name: InsertTask :one
+INSERT INTO team_tasks (id, team_id, title, description, status, assignee_member_id, created_by_member_id, priority, version, created_at, updated_at)
+VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, 1, ?, ?)
+RETURNING id, team_id, title, description, status, assignee_member_id, created_by_member_id, priority, version, result_summary, created_at, updated_at, completed_at
+`
+
+type InsertTaskParams struct {
+	ID                string         `json:"id"`
+	TeamID            string         `json:"team_id"`
+	Title             string         `json:"title"`
+	Description       sql.NullString `json:"description"`
+	AssigneeMemberID  sql.NullString `json:"assignee_member_id"`
+	CreatedByMemberID string         `json:"created_by_member_id"`
+	Priority          int64          `json:"priority"`
+	CreatedAt         int64          `json:"created_at"`
+	UpdatedAt         int64          `json:"updated_at"`
+}
+
+func (q *Queries) InsertTask(ctx context.Context, arg InsertTaskParams) (TeamTask, error) {
+	row := q.queryRow(ctx, q.insertTaskStmt, insertTask,
+		arg.ID, arg.TeamID, arg.Title, arg.Description, arg.AssigneeMemberID, arg.CreatedByMemberID, arg.Priority, arg.CreatedAt, arg.UpdatedAt,
+	)
+	var i TeamTask
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.Title, &i.Description, &i.Status, &i.AssigneeMemberID, &i.CreatedByMemberID, &i.Priority, &i.Version, &i.ResultSummary, &i.CreatedAt, &i.UpdatedAt, &i.CompletedAt,
+	)
+	return i, err
+}
+
+const getTask = `-- name: GetTask :one
+SELECT id, team_id, title, description, status, assignee_member_id, created_by_member_id, priority, version, result_summary, created_at, updated_at, completed_at
+FROM team_tasks
+WHERE id = ? AND team_id = ? LIMIT 1
+`
+
+type GetTaskParams struct {
+	ID     string `json:"id"`
+	TeamID string `json:"team_id"`
+}
+
+func (q *Queries) GetTask(ctx context.Context, arg GetTaskParams) (TeamTask, error) {
+	row := q.queryRow(ctx, q.getTaskStmt, getTask, arg.ID, arg.TeamID)
+	var i TeamTask
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.Title, &i.Description, &i.Status, &i.AssigneeMemberID, &i.CreatedByMemberID, &i.Priority, &i.Version, &i.ResultSummary, &i.CreatedAt, &i.UpdatedAt, &i.CompletedAt,
+	)
+	return i, err
+}
+
+const listTasks = `-- name: ListTasks :many
+SELECT id, team_id, title, description, status, assignee_member_id, created_by_member_id, priority, version, result_summary, created_at, updated_at, completed_at
+FROM team_tasks
+WHERE team_id = ? ORDER BY priority DESC, created_at ASC
+`
+
+func (q *Queries) ListTasks(ctx context.Context, teamID string) ([]TeamTask, error) {
+	rows, err := q.query(ctx, q.listTasksStmt, listTasks, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TeamTask{}
+	for rows.Next() {
+		var i TeamTask
+		if err := rows.Scan(
+			&i.ID, &i.TeamID, &i.Title, &i.Description, &i.Status, &i.AssigneeMemberID, &i.CreatedByMemberID, &i.Priority, &i.Version, &i.ResultSummary, &i.CreatedAt, &i.UpdatedAt, &i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const insertRun = `-- name: InsertRun :one
+INSERT INTO team_runs (id, team_id, member_id, task_id, session_id, status, attempt, heartbeat_at, started_at)
+VALUES (?, ?, ?, ?, ?, 'queued', 1, ?, ?)
+RETURNING id, team_id, member_id, task_id, session_id, status, attempt, heartbeat_at, started_at, finished_at, prompt_tokens, completion_tokens, cost_micros, usage_status, error
+`
+
+type InsertRunParams struct {
+	ID          string         `json:"id"`
+	TeamID      string         `json:"team_id"`
+	MemberID    string         `json:"member_id"`
+	TaskID      sql.NullString `json:"task_id"`
+	SessionID   string         `json:"session_id"`
+	HeartbeatAt sql.NullInt64  `json:"heartbeat_at"`
+	StartedAt   sql.NullInt64  `json:"started_at"`
+}
+
+func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (TeamRun, error) {
+	row := q.queryRow(ctx, q.insertRunStmt, insertRun,
+		arg.ID, arg.TeamID, arg.MemberID, arg.TaskID, arg.SessionID, arg.HeartbeatAt, arg.StartedAt,
+	)
+	var i TeamRun
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.MemberID, &i.TaskID, &i.SessionID, &i.Status, &i.Attempt, &i.HeartbeatAt, &i.StartedAt, &i.FinishedAt, &i.PromptTokens, &i.CompletionTokens, &i.CostMicros, &i.UsageStatus, &i.Error,
+	)
+	return i, err
+}
+
+const getRun = `-- name: GetRun :one
+SELECT id, team_id, member_id, task_id, session_id, status, attempt, heartbeat_at, started_at, finished_at, prompt_tokens, completion_tokens, cost_micros, usage_status, error
+FROM team_runs
+WHERE id = ? AND team_id = ? LIMIT 1
+`
+
+type GetRunParams struct {
+	ID     string `json:"id"`
+	TeamID string `json:"team_id"`
+}
+
+func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (TeamRun, error) {
+	row := q.queryRow(ctx, q.getRunStmt, getRun, arg.ID, arg.TeamID)
+	var i TeamRun
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.MemberID, &i.TaskID, &i.SessionID, &i.Status, &i.Attempt, &i.HeartbeatAt, &i.StartedAt, &i.FinishedAt, &i.PromptTokens, &i.CompletionTokens, &i.CostMicros, &i.UsageStatus, &i.Error,
+	)
+	return i, err
+}
+
+const insertAudit = `-- name: InsertAudit :exec
+INSERT INTO team_audit_events (id, workspace_id, team_id, member_id, task_id, run_id, session_id, tool_call_id, event_type, action, resource_type, resource_ref, input_hash, summary, decision, scope, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertAuditParams struct {
+	ID           string         `json:"id"`
+	WorkspaceID  string         `json:"workspace_id"`
+	TeamID       string         `json:"team_id"`
+	MemberID     sql.NullString `json:"member_id"`
+	TaskID       sql.NullString `json:"task_id"`
+	RunID        sql.NullString `json:"run_id"`
+	SessionID    sql.NullString `json:"session_id"`
+	ToolCallID   sql.NullString `json:"tool_call_id"`
+	EventType    string         `json:"event_type"`
+	Action       sql.NullString `json:"action"`
+	ResourceType sql.NullString `json:"resource_type"`
+	ResourceRef  sql.NullString `json:"resource_ref"`
+	InputHash    sql.NullString `json:"input_hash"`
+	Summary      sql.NullString `json:"summary"`
+	Decision     sql.NullString `json:"decision"`
+	Scope        sql.NullString `json:"scope"`
+	CreatedAt    int64          `json:"created_at"`
+}
+
+func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) error {
+	_, err := q.exec(ctx, q.insertAuditStmt, insertAudit,
+		arg.ID, arg.WorkspaceID, arg.TeamID, arg.MemberID, arg.TaskID, arg.RunID, arg.SessionID, arg.ToolCallID, arg.EventType, arg.Action, arg.ResourceType, arg.ResourceRef, arg.InputHash, arg.Summary, arg.Decision, arg.Scope, arg.CreatedAt,
+	)
+	return err
+}
+
+const listAudit = `-- name: ListAudit :many
+SELECT id, workspace_id, team_id, member_id, task_id, run_id, session_id, tool_call_id, event_type, action, resource_type, resource_ref, input_hash, summary, decision, scope, created_at
+FROM team_audit_events
+WHERE team_id = ? ORDER BY created_at DESC LIMIT ?
+`
+
+type ListAuditParams struct {
+	TeamID string `json:"team_id"`
+	Limit  int64  `json:"limit"`
+}
+
+func (q *Queries) ListAudit(ctx context.Context, arg ListAuditParams) ([]TeamAuditEvent, error) {
+	rows, err := q.query(ctx, q.listAuditStmt, listAudit, arg.TeamID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TeamAuditEvent{}
+	for rows.Next() {
+		var i TeamAuditEvent
+		if err := rows.Scan(
+			&i.ID, &i.WorkspaceID, &i.TeamID, &i.MemberID, &i.TaskID, &i.RunID, &i.SessionID, &i.ToolCallID, &i.EventType, &i.Action, &i.ResourceType, &i.ResourceRef, &i.InputHash, &i.Summary, &i.Decision, &i.Scope, &i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
