@@ -42,14 +42,20 @@ func (m *mockSessionAgent) Summarize(context.Context, string, fantasy.ProviderOp
 	return nil
 }
 
+// setupProviderConfig returns a minimal ProviderConfig for unit tests.
+func setupProviderConfig(providerID string) config.ProviderConfig {
+	return config.ProviderConfig{ID: providerID}
+}
+
 // newTestCoordinator creates a minimal coordinator for unit testing runSubAgent.
 func newTestCoordinator(t *testing.T, env fakeEnv, providerID string, providerCfg config.ProviderConfig) *coordinator {
 	cfg, err := config.Init(env.workingDir, "", false)
 	require.NoError(t, err)
 	cfg.Config().Providers.Set(providerID, providerCfg)
 	return &coordinator{
-		cfg:      cfg,
-		sessions: env.sessions,
+		cfg:             cfg,
+		sessions:        env.sessions,
+		activeSubAgents: make(map[string]*activeSubAgent),
 	}
 }
 
