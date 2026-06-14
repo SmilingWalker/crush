@@ -4,6 +4,7 @@ package team
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -546,5 +547,62 @@ func TestDelegateRunner_CancelAllGroups_MixedWithCompletedGroups(t *testing.T) {
 	// Long group canceled by the sweep.
 	assert.Equal(t, agent.TurnCanceled, longGroup.Results[0].Status)
 	assert.Equal(t, 0, runner.ActiveGroupCount())
+}
+
+// TestDelegateDemoSmoke is the runnable M2-06 demo preview. It is gated by
+// testing.Short() so the normal `go test ./...` suite skips it; the demo
+// launcher opts in via a non-short `go test -run TestDelegateDemoSmoke -v`.
+//
+// It wires the mock factory, launches a 3-delegate read-only group, cancels it
+// mid-flight, and prints the live compact-line skeleton plus the final
+// AggregateResults markdown. No real LLM, no network — it shows exactly the
+// wiring the live demo will exercise once the two prerequisites (production
+// AgentFactory + Experimental.AgentTeamPreview flag; see
+// scripts/demo-m2-prerequisites.md) land. The printed compact line is a
+// faithful skeleton derived from real group state, NOT a chat.RenderTool call
+// (that would import-cycle team→chat).
+func TestDelegateDemoSmoke(t *testing.T) {
+	if testing.Short() {
+		t.Skip("demo smoke; run via scripts/demo-m2.sh --smoke")
+	}
+	// One delegate completes fast (50ms); two are long (2s) so the cancel
+	// below catches them mid-flight — mirroring the live demo's T3/T4. The
+	// mock factory selects behavior by spec.AgentType, and M2-01 derives
+	// spec.AgentType from DelegateTask.AgentID (delegate_types.go:19-21), so
+	// the fast task carries AgentID "fast".
+	factory := &mockAgentFactory{
+		defaultDelay:  2 * time.Second,
+		defaultResult: completedResult(),
+		overrides: map[string]mockBehavior{
+			"fast": {delay: 50 * time.Millisecond, result: completedResult()},
+		},
+	}
+	runner := NewDelegateRunner(factory)
+
+	tasks := []DelegateTask{
+		{ID: "1", Prompt: "find all SQL migrations and their schemas", AgentID: "fast"},
+		{ID: "2", Prompt: "find all HTTP API route definitions", AgentID: "explore"},
+		{ID: "3", Prompt: "find all Go interface definitions", AgentID: "explore"},
+	}
+	group := runner.RunGroup(context.Background(), tasks)
+	require.NotNil(t, group)
+
+	// Let the fast delegate finish, then snapshot live state — the skeleton
+	// of the compact UI line ("Delegates N running / M done"). Use the
+	// exported RunningCount/DoneCount helpers (delegate_types.go:70,83) so
+	// the demo's accounting matches the production read path exactly.
+	time.Sleep(100 * time.Millisecond)
+	fmt.Printf("\n[M2 DEMO SMOKE] compact line skeleton: Delegates %d running / %d done\n",
+		group.RunningCount(), group.DoneCount())
+
+	// Cancel the in-flight group — exercises M2-02's CancelGroup path the
+	// live demo's T4 (Esc → cancel prompt) reaches.
+	require.NoError(t, runner.CancelGroup(group.ID))
+	group.Wait()
+
+	// Print the real AggregateResults markdown (M2-05) — the exact summary
+	// the parent agent tool returns to the model.
+	fmt.Println("[M2 DEMO SMOKE] AggregateResults markdown:")
+	fmt.Println(AggregateResults(group))
 }
 
