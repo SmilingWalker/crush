@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"strings"
 	"sync"
@@ -318,4 +319,25 @@ func TestRunSubAgentAsync_PanicBecomesErrorStatus(t *testing.T) {
 	require.Error(t, last.Error, "panic should produce a non-nil Error")
 	assert.True(t, strings.Contains(last.Error.Error(), "boom"),
 		"error should mention the panic value %q, got %q", "boom", last.Error.Error())
+}
+
+// TestRunSubAgentAsync_AgentRunFailureEmitsErrorStatus locks the async error
+// classification: a non-panic agent.Run failure (ar == nil from
+// runSubAgentStructured) surfaces as an error status, not a spurious done.
+func TestRunSubAgentAsync_AgentRunFailureEmitsErrorStatus(t *testing.T) {
+	env := testEnv(t)
+	coord := newTestCoordinator(t, env, "test-provider", setupProviderConfig("test-provider"))
+
+	parent, err := env.sessions.Create(t.Context(), "Parent")
+	require.NoError(t, err)
+
+	handle := startAsyncSubAgent(t, env, coord, parent.ID, func(_ context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+		return nil, errors.New("provider boom")
+	})
+
+	got := drainStatus(t, handle)
+	last := got[len(got)-1]
+	assert.Equal(t, subAgentStateError, last.State, "agent.Run failure must surface as error status")
+	require.Error(t, last.Error)
+	assert.Contains(t, last.Error.Error(), "provider boom")
 }
