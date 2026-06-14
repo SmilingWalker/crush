@@ -50,3 +50,119 @@ type Session struct {
 	SummaryMessageID sql.NullString `json:"summary_message_id"`
 	Todos            sql.NullString `json:"todos"`
 }
+
+type Team struct {
+	ID               string         `json:"id"`
+	WorkspaceID      string         `json:"workspace_id"`
+	LeaderSessionID  string         `json:"leader_session_id"`
+	Name             string         `json:"name"`
+	Description      sql.NullString `json:"description"`
+	Status           string         `json:"status"`
+	Version          int64          `json:"version"`
+	MaxCost          sql.NullInt64  `json:"max_cost"`
+	MaxTokens        sql.NullInt64  `json:"max_tokens"`
+	CostSoFarMicros  int64          `json:"cost_so_far_micros"`
+	CreatedAt        int64          `json:"created_at"`
+	UpdatedAt        int64          `json:"updated_at"`
+	ArchivedAt       sql.NullInt64  `json:"archived_at"`
+}
+
+type TeamMember struct {
+	ID                string         `json:"id"`
+	TeamID            string         `json:"team_id"`
+	SessionID         sql.NullString `json:"session_id"`
+	Name              string         `json:"name"`
+	Role              string         `json:"role"`
+	AgentProfile      string         `json:"agent_profile"`
+	ModelProvider     sql.NullString `json:"model_provider"`
+	ModelName         sql.NullString `json:"model_name"`
+	Status            string         `json:"status"`
+	CurrentTaskID     sql.NullString `json:"current_task_id"`
+	CurrentRunID      sql.NullString `json:"current_run_id"`
+	CurrentToolName   sql.NullString `json:"current_tool_name"`
+	LastEventSeq      int64          `json:"last_event_seq"`
+	MaxCost           sql.NullInt64  `json:"max_cost"`
+	MaxTokens         sql.NullInt64  `json:"max_tokens"`
+	CostSoFarMicros   int64          `json:"cost_so_far_micros"`
+	Version           int64          `json:"version"`
+	CreatedAt         int64          `json:"created_at"`
+	UpdatedAt         int64          `json:"updated_at"`
+	StoppedAt         sql.NullInt64  `json:"stopped_at"`
+}
+
+type TeamTask struct {
+	ID                 string         `json:"id"`
+	TeamID             string         `json:"team_id"`
+	Title              string         `json:"title"`
+	Description        sql.NullString `json:"description"`
+	Status             string         `json:"status"`
+	AssigneeMemberID   sql.NullString `json:"assignee_member_id"`
+	CreatedByMemberID  string         `json:"created_by_member_id"`
+	Priority           int64          `json:"priority"`
+	Version            int64          `json:"version"`
+	ResultSummary      sql.NullString `json:"result_summary"`
+	CreatedAt          int64          `json:"created_at"`
+	UpdatedAt          int64          `json:"updated_at"`
+	CompletedAt        sql.NullInt64  `json:"completed_at"`
+}
+
+type TeamRun struct {
+	ID                string         `json:"id"`
+	TeamID            string         `json:"team_id"`
+	MemberID          string         `json:"member_id"`
+	TaskID            sql.NullString `json:"task_id"`
+	SessionID         string         `json:"session_id"`
+	Status            string         `json:"status"`
+	Attempt           int64          `json:"attempt"`
+	HeartbeatAt       sql.NullInt64  `json:"heartbeat_at"`
+	StartedAt         sql.NullInt64  `json:"started_at"`
+	FinishedAt        sql.NullInt64  `json:"finished_at"`
+	PromptTokens      sql.NullInt64  `json:"prompt_tokens"`
+	CompletionTokens  sql.NullInt64  `json:"completion_tokens"`
+	CostMicros        sql.NullInt64  `json:"cost_micros"`
+	UsageStatus       sql.NullString `json:"usage_status"`
+	Error             sql.NullString `json:"error"`
+}
+
+type TeamEvent struct {
+	Seq            int64          `json:"seq"`
+	ID             string         `json:"id"`
+	WorkspaceID    string         `json:"workspace_id"`
+	TeamID         string         `json:"team_id"`
+	EventType      string         `json:"event_type"`
+	EntityType     string         `json:"entity_type"`
+	EntityID       string         `json:"entity_id"`
+	ActorMemberID  sql.NullString `json:"actor_member_id"`
+	TaskID         sql.NullString `json:"task_id"`
+	RunID          sql.NullString `json:"run_id"`
+	MessageID      sql.NullString `json:"message_id"`
+	PayloadJSON    sql.NullString `json:"payload_json"`
+	PublishedAt    sql.NullInt64  `json:"published_at"`
+	CreatedAt      int64          `json:"created_at"`
+}
+
+type TeamEventCounter struct {
+	TeamID    string `json:"team_id"`
+	NextSeq   int64  `json:"next_seq"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+type TeamAuditEvent struct {
+	ID            string         `json:"id"`
+	WorkspaceID   string         `json:"workspace_id"`
+	TeamID        string         `json:"team_id"`
+	MemberID      sql.NullString `json:"member_id"`
+	TaskID        sql.NullString `json:"task_id"`
+	RunID         sql.NullString `json:"run_id"`
+	SessionID     sql.NullString `json:"session_id"`
+	ToolCallID    sql.NullString `json:"tool_call_id"`
+	EventType     string         `json:"event_type"`
+	Action        sql.NullString `json:"action"`
+	ResourceType  sql.NullString `json:"resource_type"`
+	ResourceRef   sql.NullString `json:"resource_ref"`
+	InputHash     sql.NullString `json:"input_hash"`
+	Summary       sql.NullString `json:"summary"`
+	Decision      sql.NullString `json:"decision"`
+	Scope         sql.NullString `json:"scope"`
+	CreatedAt     int64          `json:"created_at"`
+}
