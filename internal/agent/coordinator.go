@@ -968,10 +968,26 @@ func isExactoSupported(modelID string) bool {
 
 func (c *coordinator) Cancel(sessionID string) {
 	c.currentAgent.Cancel(sessionID)
+
+	// M1-05: also cancel any in-flight async sub-agents owned by this session.
+	c.activeSubAgentsMu.RLock()
+	defer c.activeSubAgentsMu.RUnlock()
+	for _, asa := range c.activeSubAgents {
+		if asa.sessionID == sessionID {
+			asa.cancel()
+		}
+	}
 }
 
 func (c *coordinator) CancelAll() {
 	c.currentAgent.CancelAll()
+
+	// M1-05: also cancel every in-flight async sub-agent.
+	c.activeSubAgentsMu.RLock()
+	defer c.activeSubAgentsMu.RUnlock()
+	for _, asa := range c.activeSubAgents {
+		asa.cancel()
+	}
 }
 
 func (c *coordinator) ClearQueue(sessionID string) {

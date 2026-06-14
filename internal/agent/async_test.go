@@ -178,3 +178,112 @@ func TestRunSubAgentAsync_NoGoroutineLeak(t *testing.T) {
 	after := runtime.NumGoroutine()
 	assert.LessOrEqual(t, after, before+5, "goroutine leak: before=%d after=%d", before, after)
 }
+
+// coordWithMockCurrentAgent returns a test coordinator whose currentAgent is a
+// no-op mock, so Cancel/CancelAll (which forward to currentAgent) don't panic
+// on a nil agent.
+func coordWithMockCurrentAgent(t *testing.T, env fakeEnv) *coordinator {
+	coord := newTestCoordinator(t, env, "test-provider", setupProviderConfig("test-provider"))
+	coord.currentAgent = newMockAgent("test-provider", 4096, nil)
+	return coord
+}
+
+// blockingAsyncHandle launches an async sub-agent whose runFunc blocks until
+// its context is canceled. Returns the handle (already registered).
+func blockingAsyncHandle(t *testing.T, env fakeEnv, coord *coordinator, parentSessionID string) SubAgentHandle {
+	return startAsyncSubAgent(t, env, coord, parentSessionID, func(ctx context.Context, _ SessionAgentCall) (*fantasy.AgentResult, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+}
+
+// TestCancel_TerminatesSubAgentsForSession locks acceptance #4 (Cancel path):
+// Cancel(parentSession) cancels the in-flight async sub-agent owned by that
+// session.
+func TestCancel_TerminatesSubAgentsForSession(t *testing.T) {
+	env := testEnv(t)
+	coord := coordWithMockCurrentAgent(t, env)
+
+	parent, err := env.sessions.Create(t.Context(), "Parent")
+	require.NoError(t, err)
+
+	handle := blockingAsyncHandle(t, env, coord, parent.ID)
+
+	coord.Cancel(parent.ID) // should cancel the sub-agent for this session
+
+	done := make(chan []SubAgentStatus, 1)
+	go func() { done <- drainStatus(t, handle) }()
+	select {
+	case got := <-done:
+		assert.Equal(t, subAgentStateCanceled, got[len(got)-1].State)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Cancel did not stop the sub-agent within 5s")
+	}
+}
+
+// TestCancel_DoesNotAffectOtherSessions locks the scoping invariant: Cancel
+// for session A leaves a sub-agent owned by session B running.
+func TestCancel_DoesNotAffectOtherSessions(t *testing.T) {
+	env := testEnv(t)
+	coord := coordWithMockCurrentAgent(t, env)
+
+	parentA, err := env.sessions.Create(t.Context(), "ParentA")
+	require.NoError(t, err)
+	parentB, err := env.sessions.Create(t.Context(), "ParentB")
+	require.NoError(t, err)
+
+	handleB := blockingAsyncHandle(t, env, coord, parentB.ID)
+
+	// Consume the initial "running" status first, so the window below only
+	// observes post-Cancel activity (the goroutine always emits "running"
+	// before blocking inside runFunc).
+	first, ok := <-handleB.StatusChan
+	require.True(t, ok, "expected an initial running status")
+	assert.Equal(t, subAgentStateRunning, first.State)
+
+	coord.Cancel(parentA.ID) // must NOT touch handleB
+
+	// handleB must still be alive: no further status (and no close) within
+	// the window proves Cancel(A) did not cancel it.
+	select {
+	case s, ok := <-handleB.StatusChan:
+		if ok {
+			t.Fatalf("sub-agent for B reacted to Cancel(A): got status %q", s.State)
+		}
+		t.Fatal("sub-agent for B channel closed after Cancel(A)")
+	case <-time.After(150 * time.Millisecond):
+		// No status arrived — handleB is still blocked in runFunc. Good.
+	}
+
+	// Cleanup.
+	coord.Cancel(parentB.ID)
+	drainStatus(t, handleB)
+}
+
+// TestCancelAll_TerminatesAllSubAgents locks acceptance #4 (CancelAll path).
+func TestCancelAll_TerminatesAllSubAgents(t *testing.T) {
+	env := testEnv(t)
+	coord := coordWithMockCurrentAgent(t, env)
+
+	p1, err := env.sessions.Create(t.Context(), "P1")
+	require.NoError(t, err)
+	p2, err := env.sessions.Create(t.Context(), "P2")
+	require.NoError(t, err)
+
+	h1 := blockingAsyncHandle(t, env, coord, p1.ID)
+	h2 := blockingAsyncHandle(t, env, coord, p2.ID)
+
+	coord.CancelAll()
+
+	for _, h := range []SubAgentHandle{h1, h2} {
+		done := make(chan []SubAgentStatus, 1)
+		ha := h
+		go func() { done <- drainStatus(t, ha) }()
+		select {
+		case got := <-done:
+			assert.Equal(t, subAgentStateCanceled, got[len(got)-1].State)
+		case <-time.After(5 * time.Second):
+			t.Fatal("CancelAll did not stop a sub-agent within 5s")
+		}
+	}
+}
