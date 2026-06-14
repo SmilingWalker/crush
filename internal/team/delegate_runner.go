@@ -3,6 +3,7 @@ package team
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -141,14 +142,26 @@ func (d *DelegateRunner) RunGroup(ctx context.Context, tasks []DelegateTask) *De
 			dur := time.Since(startTime)
 
 			group.mu.Lock()
-			if runErr != nil {
+			switch {
+			case errors.Is(runErr, context.Canceled):
+				// Cancellation (CancelGroup / parent ctx cancel): record
+				// TurnCanceled, not TurnFailed (M2-02 acceptance #2). A
+				// deadline-exceeded turn is NOT a cancel — it stays TurnFailed
+				// (genuine failure to finish).
+				group.Results[idx] = DelegateResult{
+					TaskID:     t.ID,
+					Status:     agent.TurnCanceled,
+					Error:      runErr.Error(),
+					DurationMs: dur.Milliseconds(),
+				}
+			case runErr != nil:
 				group.Results[idx] = DelegateResult{
 					TaskID:     t.ID,
 					Status:     agent.TurnFailed,
 					Error:      runErr.Error(),
 					DurationMs: dur.Milliseconds(),
 				}
-			} else {
+			default:
 				group.Results[idx] = DelegateResult{
 					TaskID:         t.ID,
 					Status:         res.Status,
@@ -212,3 +225,45 @@ func (d *DelegateRunner) ActiveGroupCount() int {
 	defer d.mu.Unlock()
 	return len(d.groups)
 }
+
+// CancelGroup cancels every in-flight delegate in the named group (M2-02
+// acceptance #1, #2). Idempotent (acceptance #3): a repeat call on an
+// already-canceled group is a no-op that returns nil. Returns an error only
+// if the group id is unknown. The group is unregistered by the trailing
+// status-flip goroutine once all workers observe ctx.Done() (acceptance #4).
+//
+// Implementation delegates to cancelGroup so CancelAllGroups can reuse the
+// per-group flip+cancel logic without re-acquiring d.mu (Seam 4 lock order).
+func (d *DelegateRunner) CancelGroup(groupID string) error {
+	return d.cancelGroup(groupID)
+}
+
+// cancelGroup is the per-group flip+cancel logic shared by CancelGroup and
+// CancelAllGroups. It looks the group up under d.mu, releases d.mu, then
+// takes group.mu — the SAME lock order as the trailing status-flip goroutine
+// (group.mu then d.mu, delegate_runner.go trailing goroutine), so the two
+// paths can never form an AB-BA deadlock. Idempotent via the group.mu re-check
+// of Status == "canceled" (acceptance #3).
+func (d *DelegateRunner) cancelGroup(groupID string) error {
+	d.mu.Lock()
+	group, ok := d.groups[groupID]
+	d.mu.Unlock()
+
+	if !ok {
+		return fmt.Errorf("delegate group %s not found", groupID)
+	}
+
+	group.mu.Lock()
+	if group.Status == "canceled" {
+		group.mu.Unlock()
+		return nil // idempotent
+	}
+	group.Status = "canceled"
+	group.mu.Unlock()
+
+	group.cancel() // ctx.Done() fires in every worker goroutine
+
+	slog.Debug("canceled delegate group", "group_id", groupID)
+	return nil
+}
+

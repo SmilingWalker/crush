@@ -256,6 +256,40 @@ func TestDelegateRunner_RunError(t *testing.T) {
 	assert.GreaterOrEqual(t, group.Results[0].DurationMs, int64(0))
 }
 
+// TestDelegateRunner_WorkerCancelMapsToTurnCanceled locks Seam 3: when a
+// worker's runner.Run returns ctx.Err() (because the group context was
+// canceled), the Results slot must carry TurnCanceled — NOT TurnFailed.
+// This is the load-bearing fix M2-02 acceptance #2 requires; without it
+// CancelGroup would surface every canceled delegate as a failure.
+//
+// It exercises the path directly: a task whose runner.Run returns
+// (TurnCanceled, context.Canceled) — exactly what mockTurnRunner returns on
+// ctx.Done() (delegate_runner_test.go:33-34) — must produce TurnCanceled in
+// Results. This is distinct from TestDelegateRunner_RunError, which feeds a
+// non-cancel error and must still produce TurnFailed (regression guard).
+func TestDelegateRunner_WorkerCancelMapsToTurnCanceled(t *testing.T) {
+	factory := &mockAgentFactory{
+		defaultDelay:  5 * time.Second, // long; we cancel before it elapses
+		defaultResult: completedResult(),
+	}
+	runner := NewDelegateRunner(factory)
+
+	group := runner.RunGroup(context.Background(), []DelegateTask{
+		{ID: "1", Prompt: "p", AgentID: "explore"},
+	})
+	// Cancel the group's context directly (CancelGroup lands in Task 2; here
+	// we trip the same ctx.CancelFunc the public method will call).
+	require.NoError(t, runner.CancelGroup(group.ID))
+	group.Wait()
+
+	require.Len(t, group.Results, 1)
+	assert.Equal(t, agent.TurnCanceled, group.Results[0].Status,
+		"a canceled delegate must record TurnCanceled, not TurnFailed")
+	// Error still carries the ctx.Err() string for diagnostics.
+	assert.Contains(t, group.Results[0].Error, "context canceled")
+	assert.GreaterOrEqual(t, group.Results[0].DurationMs, int64(0))
+}
+
 // TestDelegateRunner_ActorAttribution locks Seam 4: the TeamAgentCall handed
 // to the runner carries an ActorContext tagged with the group's RunID and the
 // task's ID, so downstream observability can attribute the delegate. It
