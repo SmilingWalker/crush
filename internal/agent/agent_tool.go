@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"charm.land/fantasy"
 
@@ -89,7 +91,8 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 				return fantasy.ToolResponse{}, errors.New("agent message id missing from context")
 			}
 
-			return c.runSubAgent(ctx, subAgentParams{
+			start := time.Now()
+			resp, ar, err := c.runSubAgentStructured(ctx, subAgentParams{
 				Agent:          agent,
 				SessionID:      sessionID,
 				AgentMessageID: agentMessageID,
@@ -97,6 +100,20 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 				Prompt:         params.Prompt,
 				SessionTitle:   "New Agent Session",
 			})
+			if err != nil {
+				return resp, err
+			}
+			// agent.Run failure: runSubAgentStructured returns an error
+			// ToolResponse with ar == nil — surface it directly, do not wrap.
+			if ar == nil {
+				return resp, nil
+			}
+			result := buildAgentToolResult(ar, config.AgentTask, start, c.sessions.CreateAgentToolSessionID(agentMessageID, call.ID))
+			resultJSON, mErr := json.Marshal(result)
+			if mErr != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to serialize agent result: %s", mErr)), nil
+			}
+			return fantasy.NewTextResponse(string(resultJSON)), nil
 		},
 	), nil
 }
