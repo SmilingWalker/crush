@@ -585,9 +585,11 @@ func (s *teamService) ListTasks(ctx context.Context, teamID string, filter TaskF
 
 // --- run methods ---
 
-// StartRun inserts a run in the 'running' status — a run, once started, is
-// running. (FinishRun/MarkRunTerminal's store guard is `WHERE status='running'`;
-// a queued run would never transition. Review fix: was RunQueued, now RunRunning.)
+// StartRun inserts a run and immediately transitions it to 'running' — a run,
+// once started, is running (FinishRun/MarkRunTerminal's store guard is
+// `WHERE status='running'`; a queued run would never transition). InsertRun
+// hardcodes the initial row status to 'queued' (M3-04), so StartRun flips it to
+// 'running' in the same tx via a direct UPDATE, then returns the running row.
 func (s *teamService) StartRun(ctx context.Context, req StartRunRequest) (TeamRun, error) {
 	if err := s.enabledGuard(); err != nil {
 		return TeamRun{}, err
@@ -606,6 +608,13 @@ func (s *teamService) StartRun(ctx context.Context, req StartRunRequest) (TeamRu
 	if err != nil {
 		return TeamRun{}, err
 	}
+	// InsertRun hardcodes status='queued'; flip to 'running' so the row
+	// matches the Service's StartRun contract and FinishRun/MarkRunTerminal's
+	// `WHERE status='running'` guard will match.
+	if _, err := tx.ExecContext(ctx, `UPDATE team_runs SET status = 'running' WHERE id = ? AND team_id = ?`, run.ID, run.TeamID); err != nil {
+		return TeamRun{}, fmt.Errorf("set run running: %w", err)
+	}
+	run.Status = RunRunning
 	seq, err := s.events.NextEventSeq(ctx, tx, req.TeamID, ts)
 	if err != nil {
 		return TeamRun{}, fmt.Errorf("alloc event seq: %w", err)
