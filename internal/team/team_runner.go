@@ -215,9 +215,27 @@ func (t *teamRunner) StopMember(ctx context.Context, teamID, memberID string, mo
 }
 
 // CancelMemberTurn cancels a member's current turn. Idempotent — calling it
-// on an already-stopped member is a no-op.
+// on an already-stopped or failed member is a no-op. Delegates to
+// MemberRunner.Stop() which cancels the loop context and transitions to Stopped.
+// Full CAS canceling_turn → cancel → wait → flush → terminal lands in M4-07.
 func (t *teamRunner) CancelMemberTurn(ctx context.Context, req CancelMemberTurnRequest) error {
-	return fmt.Errorf("not implemented")
+	t.mu.RLock()
+	mr, ok := t.members[req.MemberID]
+	t.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("member %s not found in team %s", req.MemberID, req.TeamID)
+	}
+
+	// Idempotent: if already terminal, nothing to do.
+	mr.mu.Lock()
+	if mr.State == MemberStopped || mr.State == MemberFailed {
+		mr.mu.Unlock()
+		return nil
+	}
+	mr.mu.Unlock()
+
+	mr.Stop()
+	return nil
 }
 
 // Status returns a point-in-time snapshot of all registered members for a team.

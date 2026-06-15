@@ -211,3 +211,67 @@ func TestTeamRunner_StopTeam_AllMembersStopped(t *testing.T) {
 			"member %s should be terminal, got %s", id, ms.State)
 	}
 }
+
+// --- Task 4: CancelMemberTurn / Status ---
+
+func TestTeamRunner_CancelMemberTurn_Idempotent(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-cancel", LeaderSessionID: "lead-cancel", Name: "cancel-test",
+	})
+	require.NoError(t, err)
+
+	mockRunner := &recordingTurnRunner{
+		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
+	}
+	factory := &stubAgentFactory{runner: mockRunner}
+	tr := NewTeamRunner(svc, factory)
+
+	member, err := tr.SpawnMember(context.Background(), snap.Team.ID, "m1", "coder", "{}", agent.AgentSpec{})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	req := CancelMemberTurnRequest{
+		TeamID:      snap.Team.ID,
+		MemberID:    member.ID,
+		RequestedBy: "leader",
+		Reason:      "test cancel",
+	}
+
+	// First cancel should succeed.
+	err = tr.CancelMemberTurn(context.Background(), req)
+	require.NoError(t, err)
+
+	// Second cancel should be idempotent (no error, no panic).
+	err = tr.CancelMemberTurn(context.Background(), req)
+	require.NoError(t, err)
+}
+
+func TestTeamRunner_Status_ReflectsMemberState(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-status", LeaderSessionID: "lead-status", Name: "status-test",
+	})
+	require.NoError(t, err)
+
+	mockRunner := &recordingTurnRunner{
+		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
+	}
+	factory := &stubAgentFactory{runner: mockRunner}
+	tr := NewTeamRunner(svc, factory)
+
+	member, err := tr.SpawnMember(context.Background(), snap.Team.ID, "m1", "coder", "{}", agent.AgentSpec{})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	status, err := tr.Status(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+	assert.Equal(t, snap.Team.ID, status.TeamID)
+
+	ms, ok := status.Members[member.ID]
+	require.True(t, ok)
+	assert.Equal(t, "coder", ms.Role)
+	assert.Equal(t, MemberIdle, ms.State)
+}
