@@ -65,6 +65,7 @@ type KeyMap struct {
 	Sessions   key.Binding
 	Tab        key.Binding
 	ToggleYolo key.Binding
+	TeamPanel  key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -100,6 +101,10 @@ func DefaultKeyMap() KeyMap {
 		ToggleYolo: key.NewBinding(
 			key.WithKeys("ctrl+y"),
 			key.WithHelp("ctrl+y", "toggle yolo"),
+		),
+		TeamPanel: key.NewBinding(
+			key.WithKeys("ctrl+t"),
+			key.WithHelp("ctrl+t", "team panel"),
 		),
 	}
 
@@ -178,8 +183,8 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("ctrl+d", "toggle details"),
 	)
 	km.Chat.TogglePills = key.NewBinding(
-		key.WithKeys("ctrl+t", "ctrl+space"),
-		key.WithHelp("ctrl+t", "toggle tasks"),
+		key.WithKeys("ctrl+space"),
+		key.WithHelp("ctrl+space", "toggle tasks"),
 	)
 	km.Chat.PillLeft = key.NewBinding(
 		key.WithKeys("left"),

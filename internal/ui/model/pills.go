@@ -303,7 +303,7 @@ func (m *UI) renderPills() {
 	if m.pillsExpanded {
 		helpDesc = "close"
 	}
-	helpKey := t.Pills.HelpKey.Render("ctrl+t")
+	helpKey := t.Pills.HelpKey.Render("ctrl+space")
 	helpText := t.Pills.HelpText.Render(helpDesc)
 	helpHint := lipgloss.JoinHorizontal(lipgloss.Center, helpKey, " ", helpText)
 	pillsRow = lipgloss.JoinHorizontal(lipgloss.Center, pillsRow, " ", helpHint)
