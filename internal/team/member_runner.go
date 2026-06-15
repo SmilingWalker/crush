@@ -257,10 +257,20 @@ func (m *MemberRunner) handleWake(source WakeSource) {
 	m.currentRunID = run.ID
 	m.mu.Unlock()
 
+	// Build the prompt envelope via M4-05 PromptBuilder.
+	prompt, buildErr := m.buildPrompt(m.ctx, source)
+	if buildErr != nil {
+		slog.Error("handleWake: buildPrompt failed", "member_id", m.ID, "error", buildErr)
+		m.mu.Lock()
+		m.transitionLocked(MemberFailed)
+		m.mu.Unlock()
+		return
+	}
+
 	// Execute one turn.
 	result, err := m.runner.Run(m.ctx, agent.TeamAgentCall{
 		SessionID:      m.sessionID,
-		PromptEnvelope: m.buildPrompt(source),
+		PromptEnvelope: prompt,
 		Actor:          m.actorCtx(),
 	})
 
@@ -297,25 +307,15 @@ func (m *MemberRunner) handleWake(source WakeSource) {
 	m.transitionLocked(MemberIdle)
 }
 
-// buildPrompt is a stub that returns a simple prompt string from the wake source.
-// M4-05 (PromptEnvelope Builder) replaces this with full system+task+context
-// assembly. Until then, this produces a minimal prompt sufficient for state
-// machine testing.
-func (m *MemberRunner) buildPrompt(source WakeSource) string {
-	srcName := "unknown"
-	switch source {
-	case WakeSourceMailbox:
-		srcName = "mailbox"
-	case WakeSourceTask:
-		srcName = "task"
-	case WakeSourceExplicit:
-		srcName = "explicit"
-	case WakeSourceRecovery:
-		srcName = "recovery"
-	case WakeSourceDependency:
-		srcName = "dependency"
-	}
-	return fmt.Sprintf("[M4-01 stub prompt] Wake source: %s. Member %s (%s) beginning turn.", srcName, m.ID, m.Role)
+// buildPrompt assembles the full prompt envelope via PromptBuilder (M4-05).
+// The m.svc satisfies the MailboxReader interface; current task is nil until
+// M4-06 (Member Tools) wires task claiming into the wake flow.
+func (m *MemberRunner) buildPrompt(ctx context.Context, source WakeSource) (string, error) {
+	pb := NewPromptBuilder(m.ID, m.TeamID, m.Role, nil, m.svc)
+	// Set a generous byte budget: 200KB covers most model context windows.
+	// When 0 (no limit), all sections are included in full.
+	pb.SetMaxBytes(0)
+	return pb.Build(ctx)
 }
 
 // actorCtx builds an ActorContext populated from this member's identity fields.
