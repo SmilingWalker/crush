@@ -36,6 +36,7 @@ import (
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/shell"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/team"
 	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/update"
@@ -67,6 +68,14 @@ type App struct {
 	Skills *skills.Manager
 
 	config *config.ConfigStore
+
+	// team is the M3-05 team.Service constructed in New from the shared
+	// *sql.DB (M3-07 Seam 1). Exposed via TeamService() so the server can
+	// build a workspace.AppWorkspace + inject it (AppWorkspace lives in
+	// package workspace, which already imports app — so app cannot import
+	// workspace without a cycle; the wiring happens server-side). Feature
+	// gate defaults to disabled until M3-08 wires IsAgentTeamEnabled.
+	team team.Service
 
 	serviceEventsWG *sync.WaitGroup
 	eventsCtx       context.Context
@@ -114,6 +123,17 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		tuiWG:              &sync.WaitGroup{},
 		agentNotifications: pubsub.NewBroker[notify.Notification](),
 	}
+
+	// M3-07 Seam 1: construct the team.Service from the shared *sql.DB so the
+	// server can reach TeamWorkspace via App.Team(). The 6 stores each wrap a
+	// *db.Queries (q above); the Service orchestrates them. Feature gate
+	// defaults to DISABLED — M3-08 wires config.Options.IsAgentTeamEnabled via
+	// team.WithEnabledGate.
+	app.team = team.NewService(
+		conn,
+		team.NewTeamStore(q), team.NewMemberStore(q), team.NewTaskStore(q),
+		team.NewRunStore(q), team.NewEventStore(q), team.NewAuditStore(q),
+	)
 
 	app.setupEvents()
 
