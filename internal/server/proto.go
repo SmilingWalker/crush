@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"github.com/charmbracelet/crush/internal/backend"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/session"
+	"github.com/charmbracelet/crush/internal/team"
 	"github.com/google/uuid"
 )
 
@@ -1044,7 +1046,22 @@ func (c *controllerV1) handleError(w http.ResponseWriter, r *http.Request, err e
 		status = http.StatusBadRequest
 	case errors.Is(err, backend.ErrClientNotAttached):
 		status = http.StatusNotFound
+	case errors.Is(err, team.ErrFeatureDisabled):
+		status = http.StatusForbidden
+	case errors.Is(err, team.ErrVersionConflict):
+		status = http.StatusConflict
+	case errors.Is(err, team.ErrNoTaskAvailable):
+		status = http.StatusNotFound
+	case errors.Is(err, sql.ErrNoRows):
+		status = http.StatusNotFound
 	}
+	// NOTE: workspace.ErrTeamServiceNotConfigured (503) is intentionally NOT
+	// mapped here — the server cannot import package workspace (cycle:
+	// workspace → client → server). That sentinel fires only pre-M3-08 when
+	// the team service is nil, but the Service gate (ErrFeatureDisabled→403)
+	// fires first in that state, so the 503 case is effectively unreachable
+	// in M3-07; it falls through to the 500 default. M3-08 can move the
+	// sentinel to a cycle-free package if a precise 503 is needed.
 	c.server.logError(r, err.Error())
 	jsonError(w, status, err.Error())
 }
