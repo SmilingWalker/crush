@@ -2,6 +2,7 @@ package team
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -274,4 +275,101 @@ func TestTeamRunner_Status_ReflectsMemberState(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "coder", ms.Role)
 	assert.Equal(t, MemberIdle, ms.State)
+}
+
+// --- Task 5: Goroutine leak + late-run safety ---
+
+// blockingTurnRunner blocks Run() until either done is closed or ctx is cancelled.
+type blockingTurnRunner struct {
+	done      chan struct{}
+	runResult agent.TurnRunResult
+}
+
+func (m *blockingTurnRunner) Run(ctx context.Context, call agent.TeamAgentCall) (agent.TurnRunResult, error) {
+	select {
+	case <-ctx.Done():
+		return agent.TurnRunResult{}, ctx.Err()
+	case <-m.done:
+		return m.runResult, nil
+	}
+}
+
+func (m *blockingTurnRunner) Cancel(sessionID string) {}
+
+func (m *blockingTurnRunner) IsSessionBusy(sessionID string) bool { return false }
+
+func TestTeamRunner_SpawnMember_NoGoroutineLeak(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-leak", LeaderSessionID: "lead-leak", Name: "leak-test",
+	})
+	require.NoError(t, err)
+
+	mockRunner := &recordingTurnRunner{
+		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
+	}
+	factory := &stubAgentFactory{runner: mockRunner}
+	tr := NewTeamRunner(svc, factory)
+
+	before := runtime.NumGoroutine()
+
+	member, err := tr.SpawnMember(context.Background(), snap.Team.ID, "m1", "coder", "{}", agent.AgentSpec{})
+	require.NoError(t, err)
+
+	time.Sleep(200 * time.Millisecond)
+
+	err = tr.StopMember(context.Background(), snap.Team.ID, member.ID, StopCancel)
+	require.NoError(t, err)
+
+	time.Sleep(200 * time.Millisecond)
+
+	after := runtime.NumGoroutine()
+	assert.LessOrEqual(t, after-before, 3, "goroutine leak: before=%d after=%d delta=%d", before, after, after-before)
+}
+
+func TestTeamRunner_LateRunDoesNotOverwriteCanceledState(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-late", LeaderSessionID: "lead-late", Name: "late-run-test",
+	})
+	require.NoError(t, err)
+
+	blockingRunner := &blockingTurnRunner{done: make(chan struct{})}
+	factory := &stubAgentFactory{runner: blockingRunner}
+	tr := NewTeamRunner(svc, factory)
+
+	member, err := tr.SpawnMember(context.Background(), snap.Team.ID, "m1", "coder", "{}", agent.AgentSpec{})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Wake the member — it will block in Run().
+	trImpl := tr.(*teamRunner)
+	trImpl.mu.RLock()
+	mr := trImpl.members[member.ID]
+	trImpl.mu.RUnlock()
+	mr.Wake(WakeSourceExplicit)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancel the member while it's running.
+	err = tr.CancelMemberTurn(context.Background(), CancelMemberTurnRequest{
+		TeamID:      snap.Team.ID,
+		MemberID:    member.ID,
+		RequestedBy: "leader",
+		Reason:      "test cancel",
+		Timeout:     5 * time.Second,
+	})
+	require.NoError(t, err)
+
+	// Now let the Run complete (late result).
+	close(blockingRunner.done)
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify member is still in terminal state (stopped).
+	status, err := tr.Status(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+	ms := status.Members[member.ID]
+	assert.Equal(t, MemberStopped, ms.State, "late run should not overwrite stopped state")
 }

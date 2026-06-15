@@ -215,9 +215,17 @@ func (t *teamRunner) StopMember(ctx context.Context, teamID, memberID string, mo
 }
 
 // CancelMemberTurn cancels a member's current turn. Idempotent — calling it
-// on an already-stopped or failed member is a no-op. Delegates to
-// MemberRunner.Stop() which cancels the loop context and transitions to Stopped.
-// Full CAS canceling_turn → cancel → wait → flush → terminal lands in M4-07.
+// on an already-stopped or failed member is a no-op.
+//
+// The cancel sequence follows the validTransitions state machine:
+//   running → canceling_turn (CAS)
+//   cancel context → wait for handleWake to detect ctx.Done()
+//   idle → shutting_down → stopped (terminal)
+//
+// This is critical for acceptance #5: late Run results are guarded by
+// validTransitions — a transitionLocked to MemberIdle from MemberStopped
+// (or MemberShuttingDown) is invalid, so the late result cannot overwrite
+// the terminal state.
 func (t *teamRunner) CancelMemberTurn(ctx context.Context, req CancelMemberTurnRequest) error {
 	t.mu.RLock()
 	mr, ok := t.members[req.MemberID]
@@ -226,15 +234,54 @@ func (t *teamRunner) CancelMemberTurn(ctx context.Context, req CancelMemberTurnR
 		return fmt.Errorf("member %s not found in team %s", req.MemberID, req.TeamID)
 	}
 
-	// Idempotent: if already terminal, nothing to do.
 	mr.mu.Lock()
+
+	// Idempotent: if already terminal, nothing to do.
 	if mr.State == MemberStopped || mr.State == MemberFailed {
 		mr.mu.Unlock()
 		return nil
 	}
+
+	// CAS: if currently in a runnable state, transition to canceling_turn.
+	// This gives handleWake a valid state to transition from when Run() returns.
+	if mr.State == MemberRunning || mr.State == MemberWaitingPermission {
+		mr.transitionLocked(MemberCancelingTurn)
+	}
+
+	// Cancel the loop context — this causes Run() to return with context.Canceled.
+	if mr.cancel != nil {
+		mr.cancel()
+	}
 	mr.mu.Unlock()
 
-	mr.Stop()
+	// Wait for handleWake to detect the cancelled context and transition to idle.
+	timeout := req.Timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		mr.mu.Lock()
+		state := mr.State
+		mr.mu.Unlock()
+		if state == MemberIdle || state == MemberStopped || state == MemberFailed {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	// Final transition to stopped via the valid path: shutting_down → stopped.
+	mr.mu.Lock()
+	if mr.State == MemberIdle || mr.State == MemberCancelingTurn {
+		mr.transitionLocked(MemberShuttingDown)
+		mr.transitionLocked(MemberStopped)
+	}
+	mr.mu.Unlock()
+
 	return nil
 }
 
