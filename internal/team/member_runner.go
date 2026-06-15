@@ -108,20 +108,23 @@ func (m *MemberRunner) transitionLocked(to MemberStatus) {
 			m.State = to
 			// Async CAS update to DB. The Service handles read-then-CAS
 			// internally; we don't pass version (Seam 3 deviation from master doc).
-			go func() {
-				updated, err := m.svc.UpdateMemberState(context.Background(), UpdateMemberStateRequest{
-					ID:     m.ID,
-					TeamID: m.TeamID,
-					Status: to,
-				})
-				if err != nil {
-					slog.Error("transitionLocked: UpdateMemberState failed",
-						"member_id", m.ID, "from", prev, "to", to, "error", err)
-					return
-				}
-				// CAS succeeded — the returned member has the new version.
-				_ = updated
-			}()
+			// Guard against nil svc (unit tests may not wire one).
+			if m.svc != nil {
+				go func() {
+					updated, err := m.svc.UpdateMemberState(context.Background(), UpdateMemberStateRequest{
+						ID:     m.ID,
+						TeamID: m.TeamID,
+						Status: to,
+					})
+					if err != nil {
+						slog.Error("transitionLocked: UpdateMemberState failed",
+							"member_id", m.ID, "from", prev, "to", to, "error", err)
+						return
+					}
+					// CAS succeeded — the returned member has the new version.
+					_ = updated
+				}()
+			}
 			return
 		}
 	}
