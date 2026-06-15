@@ -48,3 +48,30 @@ func NewScheduler(svc Service, cfg SchedulerConfig) *Scheduler {
 func (s *Scheduler) ClaimNextTask(ctx context.Context, req ClaimNextTaskRequest) (TeamTask, error) {
 	return s.svc.ClaimNextTask(ctx, req)
 }
+
+// StartHeartbeat launches a background goroutine that calls HeartbeatRun on the
+// Service every cfg.HeartbeatInterval. The parent context controls lifetime:
+// when it is cancelled, the goroutine stops. The returned cancel function lets
+// the caller stop the heartbeat explicitly (e.g. after FinishRun or
+// MarkRunTerminal).
+//
+// Heartbeat failures are non-fatal — the goroutine continues silently.
+// M4-08 adds error logging and retry.
+func (s *Scheduler) StartHeartbeat(ctx context.Context, runID string) (func(), error) {
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(s.cfg.HeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := s.svc.HeartbeatRun(ctx, runID); err != nil {
+					// Non-fatal: M4-08 adds logging/retry here.
+				}
+			}
+		}
+	}()
+	return cancel, nil
+}

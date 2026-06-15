@@ -129,3 +129,117 @@ func TestScheduler_ClaimNextTask_ConcurrentSingleWinner(t *testing.T) {
 	assert.Equal(t, 1, wins, "exactly 1 goroutine wins the single task")
 	assert.Equal(t, 9, noAvail, "the other 9 goroutines get ErrNoTaskAvailable")
 }
+
+func TestScheduler_StartHeartbeat_TickerAndCancel(t *testing.T) {
+	_, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+	run, err := svc.StartRun(ctx, StartRunRequest{TeamID: snap.Team.ID, MemberID: m.ID, SessionID: "sess-1"})
+	require.NoError(t, err)
+
+	// Fast ticker for testing.
+	fastCfg := DefaultSchedulerConfig()
+	fastCfg.HeartbeatInterval = 50 * time.Millisecond
+	fastS := NewScheduler(svc, fastCfg)
+
+	cancel, err := fastS.StartHeartbeat(ctx, run.ID)
+	require.NoError(t, err)
+	require.NotNil(t, cancel)
+
+	// Wait for at least 2 ticks.
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	time.Sleep(100 * time.Millisecond) // allow goroutine to exit
+
+	// Verify heartbeat_at was updated (at least once after the initial value).
+	debug, err := svc.DebugSnapshot(ctx, snap.Team.ID)
+	require.NoError(t, err)
+	for _, r := range debug.Runs {
+		if r.ID == run.ID {
+			require.NotNil(t, r.HeartbeatAt)
+			assert.True(t, r.HeartbeatAt.After(*run.HeartbeatAt),
+				"heartbeat should have been updated by ticker (after %v, got %v)", *run.HeartbeatAt, *r.HeartbeatAt)
+			return
+		}
+	}
+	t.Fatal("run not found in debug snapshot")
+}
+
+func TestScheduler_StartHeartbeat_CancelStopsTicker(t *testing.T) {
+	_, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+	run, err := svc.StartRun(ctx, StartRunRequest{TeamID: snap.Team.ID, MemberID: m.ID, SessionID: "sess-1"})
+	require.NoError(t, err)
+
+	fastCfg := DefaultSchedulerConfig()
+	fastCfg.HeartbeatInterval = 50 * time.Millisecond
+	fastS := NewScheduler(svc, fastCfg)
+
+	cancel, err := fastS.StartHeartbeat(ctx, run.ID)
+	require.NoError(t, err)
+
+	// Cancel immediately — ticker should NOT fire.
+	cancel()
+
+	// Snapshot before sleep.
+	debug, err := svc.DebugSnapshot(ctx, snap.Team.ID)
+	require.NoError(t, err)
+	var hbBefore *time.Time
+	for _, r := range debug.Runs {
+		if r.ID == run.ID {
+			hbBefore = r.HeartbeatAt
+			break
+		}
+	}
+	require.NotNil(t, hbBefore)
+
+	// Wait long enough for a tick if it were still running.
+	time.Sleep(150 * time.Millisecond)
+
+	// Re-read: heartbeat should NOT have changed.
+	debug2, err := svc.DebugSnapshot(ctx, snap.Team.ID)
+	require.NoError(t, err)
+	for _, r := range debug2.Runs {
+		if r.ID == run.ID {
+			require.NotNil(t, r.HeartbeatAt)
+			assert.True(t, r.HeartbeatAt.Equal(*hbBefore) || !r.HeartbeatAt.After(hbBefore.Add(100*time.Millisecond)),
+				"heartbeat should not have advanced after cancel")
+			return
+		}
+	}
+}
+
+func TestScheduler_StartHeartbeat_ParentCtxCancelStopsGoroutine(t *testing.T) {
+	_, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+	run, err := svc.StartRun(ctx, StartRunRequest{TeamID: snap.Team.ID, MemberID: m.ID, SessionID: "sess-1"})
+	require.NoError(t, err)
+
+	fastCfg := DefaultSchedulerConfig()
+	fastCfg.HeartbeatInterval = 50 * time.Millisecond
+	fastS := NewScheduler(svc, fastCfg)
+
+	parentCtx, parentCancel := context.WithCancel(ctx)
+	cancel, err := fastS.StartHeartbeat(parentCtx, run.ID)
+	require.NoError(t, err)
+	_ = cancel
+
+	// Cancel parent → goroutine should stop (no panic/leak).
+	parentCancel()
+	time.Sleep(100 * time.Millisecond)
+	cancel() // should not panic on already-cancelled context
+}
