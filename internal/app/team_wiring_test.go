@@ -32,6 +32,7 @@ func newTeamServiceFixture(t *testing.T, agentTeamEnabled bool) team.Service {
 		sqlDB,
 		team.NewTeamStore(q), team.NewMemberStore(q), team.NewTaskStore(q),
 		team.NewRunStore(q), team.NewEventStore(q), team.NewAuditStore(q),
+		team.NewMailboxStore(q),
 		team.WithEnabledGate(func() bool { return agentTeamEnabled }),
 	)
 }

@@ -143,6 +143,9 @@ type Service interface {
 	MarkRunTerminal(ctx context.Context, req MarkRunTerminalRequest) error
 	FindStaleRuns(ctx context.Context, cutoff time.Time) ([]TeamRun, error)
 
+	SendMessage(ctx context.Context, req SendMessageRequest) ([]string, error)
+	GetUnreadMessages(ctx context.Context, memberID string, limit int) ([]MailboxMessage, error)
+
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
 	DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
 }
@@ -157,6 +160,7 @@ type teamService struct {
 	runs    RunStore
 	events  EventStore
 	audits  AuditStore
+	mailbox MailboxStore
 	enabled func() bool
 }
 
@@ -169,9 +173,9 @@ func WithEnabledGate(fn func() bool) ServiceOption {
 	return func(s *teamService) { s.enabled = fn }
 }
 
-// NewService builds a Service over the given *sql.DB + 6 stores. The feature
+// NewService builds a Service over the given *sql.DB + 7 stores. The feature
 // gate defaults to disabled; pass WithEnabledGate to enable.
-func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStore, runs RunStore, events EventStore, audits AuditStore, opts ...ServiceOption) Service {
+func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStore, runs RunStore, events EventStore, audits AuditStore, mailbox MailboxStore, opts ...ServiceOption) Service {
 	s := &teamService{
 		db:      db,
 		teams:   teams,
@@ -180,6 +184,7 @@ func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStor
 		runs:    runs,
 		events:  events,
 		audits:  audits,
+		mailbox: mailbox,
 		enabled: func() bool { return false }, // safe default: disabled until wired
 	}
 	for _, opt := range opts {

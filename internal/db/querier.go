@@ -71,6 +71,11 @@ type Querier interface {
 	GetRun(ctx context.Context, arg GetRunParams) (TeamRun, error)
 	InsertAudit(ctx context.Context, arg InsertAuditParams) error
 	ListAudit(ctx context.Context, arg ListAuditParams) ([]TeamAuditEvent, error)
+	InsertMessage(ctx context.Context, arg InsertMessageParams) (TeamMailboxMessage, error)
+	GetUnreadMessages(ctx context.Context, arg GetUnreadMessagesParams) ([]TeamMailboxMessage, error)
+	InsertReceipt(ctx context.Context, arg InsertReceiptParams) error
+	MarkDelivered(ctx context.Context, arg MarkDeliveredParams) error
+	MarkRead(ctx context.Context, arg MarkReadParams) error
 }
 
 var _ Querier = (*Queries)(nil)

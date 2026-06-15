@@ -205,3 +205,25 @@ func toAuditEvent(r db.TeamAuditEvent) AuditEvent {
 		CreatedAt:    time.UnixMilli(r.CreatedAt),
 	}
 }
+
+func toMailboxMessage(r db.TeamMailboxMessage) MailboxMessage {
+	return MailboxMessage{
+		ID:           r.ID,
+		TeamID:       r.TeamID,
+		FromMemberID: r.FromMemberID,
+		Kind:         MessageKind(r.Kind),
+		Summary:      r.Summary,
+		Payload:      r.Payload,
+		CreatedAt:    time.UnixMilli(r.CreatedAt),
+	}
+}
+
+func toMessageReceipt(r db.TeamMessageReceipt) MessageReceipt {
+	return MessageReceipt{
+		ID:          r.ID,
+		MessageID:   r.MessageID,
+		ToMemberID:  r.ToMemberID,
+		DeliveredAt: nullInt64ToTimePtr(r.DeliveredAt),
+		ReadAt:      nullInt64ToTimePtr(r.ReadAt),
+	}
+}

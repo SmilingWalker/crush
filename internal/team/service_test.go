@@ -20,6 +20,7 @@ func newServiceFixture(t *testing.T) (Service, *sql.DB) {
 		sqlDB,
 		NewTeamStore(q), NewMemberStore(q), NewTaskStore(q),
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
+		NewMailboxStore(q),
 		WithEnabledGate(func() bool { return true }),
 	)
 	return svc, sqlDB
@@ -31,6 +32,7 @@ func TestService_FeatureGateOffReturnsErrFeatureDisabled(t *testing.T) {
 		sqlDB,
 		NewTeamStore(q), NewMemberStore(q), NewTaskStore(q),
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
+		NewMailboxStore(q),
 		// NO WithEnabledGate → default disabled (Seam 1 safe default)
 	)
 	_, err := svc.CreateTeam(context.Background(), CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "X"})
@@ -148,6 +150,7 @@ func TestService_UpdateTask_PropagatesErrVersionConflict(t *testing.T) {
 		sqlDB,
 		NewTeamStore(q), NewMemberStore(q), &stubConflictTaskStore{conflictErr: ErrVersionConflict},
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
+		NewMailboxStore(q),
 		WithEnabledGate(func() bool { return true }),
 	)
 	_, err := svc.UpdateTask(context.Background(), UpdateTaskRequest{ID: "tk1", TeamID: "t1", Status: TaskInProgress})

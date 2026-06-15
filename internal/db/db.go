@@ -207,6 +207,21 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listAuditStmt, err = db.PrepareContext(ctx, listAudit); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAudit: %w", err)
 	}
+	if q.insertMessageStmt, err = db.PrepareContext(ctx, insertMessage); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertMessage: %w", err)
+	}
+	if q.getUnreadMessagesStmt, err = db.PrepareContext(ctx, getUnreadMessages); err != nil {
+		return nil, fmt.Errorf("error preparing query GetUnreadMessages: %w", err)
+	}
+	if q.insertReceiptStmt, err = db.PrepareContext(ctx, insertReceipt); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertReceipt: %w", err)
+	}
+	if q.markDeliveredStmt, err = db.PrepareContext(ctx, markDelivered); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkDelivered: %w", err)
+	}
+	if q.markReadStmt, err = db.PrepareContext(ctx, markRead); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkRead: %w", err)
+	}
 	return &q, nil
 }
 
@@ -517,6 +532,31 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listAuditStmt: %w", cerr)
 		}
 	}
+	if q.insertMessageStmt != nil {
+		if cerr := q.insertMessageStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertMessageStmt: %w", cerr)
+		}
+	}
+	if q.getUnreadMessagesStmt != nil {
+		if cerr := q.getUnreadMessagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getUnreadMessagesStmt: %w", cerr)
+		}
+	}
+	if q.insertReceiptStmt != nil {
+		if cerr := q.insertReceiptStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertReceiptStmt: %w", cerr)
+		}
+	}
+	if q.markDeliveredStmt != nil {
+		if cerr := q.markDeliveredStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markDeliveredStmt: %w", cerr)
+		}
+	}
+	if q.markReadStmt != nil {
+		if cerr := q.markReadStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markReadStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -617,6 +657,11 @@ type Queries struct {
 	getRunStmt                     *sql.Stmt
 	insertAuditStmt                *sql.Stmt
 	listAuditStmt                  *sql.Stmt
+	insertMessageStmt              *sql.Stmt
+	getUnreadMessagesStmt          *sql.Stmt
+	insertReceiptStmt              *sql.Stmt
+	markDeliveredStmt              *sql.Stmt
+	markReadStmt                   *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -684,5 +729,10 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getRunStmt:                     q.getRunStmt,
 		insertAuditStmt:                q.insertAuditStmt,
 		listAuditStmt:                  q.listAuditStmt,
+		insertMessageStmt:              q.insertMessageStmt,
+		getUnreadMessagesStmt:          q.getUnreadMessagesStmt,
+		insertReceiptStmt:              q.insertReceiptStmt,
+		markDeliveredStmt:              q.markDeliveredStmt,
+		markReadStmt:                   q.markReadStmt,
 	}
 }

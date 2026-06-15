@@ -283,3 +283,74 @@ type TeamSnapshot struct {
 	Runs    []TeamRun    `json:"runs,omitempty"`
 	Cost    int64        `json:"cost"`
 }
+
+// RecipientType selects the recipient resolution strategy for SendMessage.
+// M4-04 master doc :468-476.
+type RecipientType string
+
+const (
+	RecipientDirect    RecipientType = "direct"
+	RecipientBroadcast RecipientType = "broadcast"
+	RecipientRole      RecipientType = "role"
+)
+
+var allRecipientTypes = []RecipientType{
+	RecipientDirect, RecipientBroadcast, RecipientRole,
+}
+
+func (r RecipientType) Valid() bool {
+	for _, v := range allRecipientTypes {
+		if r == v {
+			return true
+		}
+	}
+	return false
+}
+
+// MessageKind classifies a mailbox message for prompt-building and UI.
+// M4-04 master doc :478-485.
+type MessageKind string
+
+const (
+	KindMessage         MessageKind = "message"
+	KindTaskAssignment  MessageKind = "task_assignment"
+	KindTaskStatus      MessageKind = "task_status"
+	KindShutdownRequest MessageKind = "shutdown_request"
+	KindShutdownAck     MessageKind = "shutdown_ack"
+)
+
+var allMessageKinds = []MessageKind{
+	KindMessage, KindTaskAssignment, KindTaskStatus,
+	KindShutdownRequest, KindShutdownAck,
+}
+
+func (k MessageKind) Valid() bool {
+	for _, v := range allMessageKinds {
+		if k == v {
+			return true
+		}
+	}
+	return false
+}
+
+// MailboxMessage is the domain representation of a team_mailbox_messages row.
+// Payload is an opaque JSON blob (string at the domain layer).
+type MailboxMessage struct {
+	ID           string      `json:"id"`
+	TeamID       string      `json:"team_id"`
+	FromMemberID string      `json:"from_member_id"`
+	Kind         MessageKind `json:"kind"`
+	Summary      string      `json:"summary"`
+	Payload      string      `json:"payload"`
+	CreatedAt    time.Time   `json:"created_at"`
+}
+
+// MessageReceipt is the domain representation of a team_message_receipts row.
+// DeliveredAt/ReadAt are nullable epoch millis → *time.Time.
+type MessageReceipt struct {
+	ID          string     `json:"id"`
+	MessageID   string     `json:"message_id"`
+	ToMemberID  string     `json:"to_member_id"`
+	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	ReadAt      *time.Time `json:"read_at,omitempty"`
+}
