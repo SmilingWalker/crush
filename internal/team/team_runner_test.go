@@ -1,8 +1,11 @@
 package team
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/charmbracelet/crush/internal/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -49,4 +52,36 @@ func TestNewTeamRunner(t *testing.T) {
 	factory := &stubAgentFactory{}
 	tr := NewTeamRunner(svc, factory)
 	require.NotNil(t, tr)
+}
+
+// --- Task 2: SpawnMember ---
+
+func TestTeamRunner_SpawnMember_E2E(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-1", LeaderSessionID: "lead-1", Name: "spawn-test",
+	})
+	require.NoError(t, err)
+
+	mockRunner := &recordingTurnRunner{
+		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
+	}
+	factory := &stubAgentFactory{runner: mockRunner}
+	tr := NewTeamRunner(svc, factory)
+
+	member, err := tr.SpawnMember(context.Background(), snap.Team.ID, "test-member", "coder", "{}", agent.AgentSpec{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, member.ID)
+	assert.Equal(t, "test-member", member.Name)
+	assert.Equal(t, "coder", member.Role)
+
+	// Wait for the background goroutine to start and complete the turn.
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify member is registered and status reflects idle after turn.
+	status, err := tr.Status(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+	ms, ok := status.Members[member.ID]
+	require.True(t, ok, "member %s should be registered", member.ID)
+	assert.Equal(t, MemberIdle, ms.State)
 }

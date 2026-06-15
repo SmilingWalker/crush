@@ -101,9 +101,29 @@ func (t *teamRunner) StopTeam(ctx context.Context, teamID string, mode StopMode)
 }
 
 // SpawnMember creates a member in the DB, builds a MemberRunner, starts it,
-// and registers it in the member map.
+// and registers it in the member map. The returned TeamMember comes from the
+// DB insert (ID is server-generated).
 func (t *teamRunner) SpawnMember(ctx context.Context, teamID, name, role, agentProfile string, spec agent.AgentSpec) (TeamMember, error) {
-	return TeamMember{}, fmt.Errorf("not implemented")
+	dbMember, err := t.svc.SpawnMember(ctx, SpawnMemberRequest{
+		TeamID:       teamID,
+		Name:         name,
+		Role:         role,
+		AgentProfile: agentProfile,
+	})
+	if err != nil {
+		return TeamMember{}, fmt.Errorf("spawn member in db: %w", err)
+	}
+
+	mr := NewMemberRunner(dbMember.ID, teamID, spec, t.factory, t.svc)
+	if err := mr.Start(ctx); err != nil {
+		return TeamMember{}, fmt.Errorf("start member runner: %w", err)
+	}
+
+	t.mu.Lock()
+	t.members[dbMember.ID] = mr
+	t.mu.Unlock()
+
+	return dbMember, nil
 }
 
 // StopMember looks up a member by ID and stops it with the given mode.
@@ -119,5 +139,29 @@ func (t *teamRunner) CancelMemberTurn(ctx context.Context, req CancelMemberTurnR
 
 // Status returns a point-in-time snapshot of all registered members for a team.
 func (t *teamRunner) Status(ctx context.Context, teamID string) (TeamRuntimeStatus, error) {
-	return TeamRuntimeStatus{}, fmt.Errorf("not implemented")
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	status := TeamRuntimeStatus{
+		TeamID:  teamID,
+		Members: make(map[string]MemberRuntimeState, len(t.members)),
+	}
+
+	for id, mr := range t.members {
+		if mr.TeamID != teamID {
+			continue
+		}
+		mr.mu.Lock()
+		ms := MemberRuntimeState{
+			State:        mr.State,
+			Role:         mr.Role,
+			CurrentRunID: mr.currentRunID,
+		}
+		mr.mu.Unlock()
+		status.Members[id] = ms
+		if ms.State == MemberRunning || ms.State == MemberQueued {
+			status.ActiveRuns++
+		}
+	}
+	return status, nil
 }
