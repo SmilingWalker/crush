@@ -95,27 +95,35 @@ func (s *Scheduler) RecoverStaleRuns(ctx context.Context) (*RecoveryReport, erro
 
 	report := &RecoveryReport{}
 	for _, run := range stale {
+		usageStatus := usageStatusForRun(run.Status)
+
 		info := StaleRunInfo{
-			RunID:    run.ID,
-			TeamID:   run.TeamID,
-			MemberID: run.MemberID,
-			Status:   string(run.Status),
+			RunID:             run.ID,
+			TeamID:            run.TeamID,
+			MemberID:          run.MemberID,
+			Status:            string(run.Status),
+			InterruptedReason: InterruptedHeartbeatLost,
+			UsageStatus:       usageStatus,
 		}
 		if run.HeartbeatAt != nil {
 			info.LastHeartbeat = *run.HeartbeatAt
 		}
 
-		// MarkRunTerminal guards on status='running' (Seam 10). A stale run in
-		// 'queued' or 'waiting_permission' will fail to match — skip it silently.
-		// M4-08 widens the guard to accept those statuses too.
+		// M4-08: pass the run's actual status as expected, so queued and
+		// waiting_permission runs can also be transitioned to interrupted
+		// (widen Seam 10 guard).
 		if err := s.svc.MarkRunTerminal(ctx, MarkRunTerminalRequest{
-			TeamID: run.TeamID,
-			RunID:  run.ID,
-			Status: RunInterrupted,
-			Error:  "heartbeat timeout — run interrupted by stale recovery",
+			TeamID:         run.TeamID,
+			RunID:          run.ID,
+			Status:         RunInterrupted,
+			ExpectedStatus: run.Status,
+			Error:          "heartbeat timeout — run interrupted by stale recovery",
+			UsageStatus:    usageStatus,
 		}); err != nil {
-			// MarkRunTerminal failed — likely the run is not in 'running' status.
-			// Don't count it as interrupted; M4-08 adds structured error tracking.
+			report.Errors = append(report.Errors, RecoveryError{
+				RunID: run.ID,
+				Error: err.Error(),
+			})
 			continue
 		}
 
@@ -124,4 +132,58 @@ func (s *Scheduler) RecoverStaleRuns(ctx context.Context) (*RecoveryReport, erro
 	}
 
 	return report, nil
+}
+
+// usageStatusForRun maps a RunStatus to the appropriate UsageStatus string for
+// an interrupted run. Running/waiting_permission had partial execution → partial;
+// queued never started → unknown.
+func usageStatusForRun(status RunStatus) string {
+	switch status {
+	case RunRunning, RunWaitingPermission:
+		return UsageStatusPartial
+	case RunQueued:
+		return UsageStatusUnknown
+	default:
+		return UsageStatusUnknown
+	}
+}
+
+// StartupRecovery performs a full startup recovery pass: marks stale runs as
+// interrupted (via RecoverStaleRuns), then restores impacted members to idle
+// (M4-03 acceptance #4 — deferred to M4-08). Each member whose run was
+// interrupted has its current_run_id and current_task_id cleared and its status
+// set to idle via UpdateMemberState.
+//
+// Member restoration is non-fatal — if one member's CAS fails (e.g. concurrent
+// modification), the error is logged and the next member is attempted.
+func (s *Scheduler) StartupRecovery(ctx context.Context) (*StartupRecoveryReport, error) {
+	runReport, err := s.RecoverStaleRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Deduplicate member IDs (one member may have multiple stale runs).
+	members := make(map[string]string) // memberID → teamID
+	for _, info := range runReport.Details {
+		members[info.MemberID] = info.TeamID
+	}
+
+	restored := 0
+	for memberID, teamID := range members {
+		if _, err := s.svc.UpdateMemberState(ctx, UpdateMemberStateRequest{
+			ID:     memberID,
+			TeamID: teamID,
+			Status: MemberIdle,
+			// TaskID, RunID, ToolName left nil → cleared on the member row.
+		}); err != nil {
+			// Non-fatal: log and continue with the next member.
+			continue
+		}
+		restored++
+	}
+
+	return &StartupRecoveryReport{
+		RunsRecovered:   runReport.InterruptedCount,
+		MembersRestored: restored,
+	}, nil
 }

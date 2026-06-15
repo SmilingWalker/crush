@@ -101,12 +101,15 @@ type FinishRunRequest struct {
 }
 
 // MarkRunTerminalRequest moves a run to a terminal status with an error.
+// M4-08 adds ExpectedStatus so callers can specify what status the run must
+// currently be in (widens the guard beyond hard-coded 'running').
 type MarkRunTerminalRequest struct {
-	TeamID      string    `json:"team_id"`
-	RunID       string    `json:"run_id"`
-	Status      RunStatus `json:"status"`
-	Error       string    `json:"error,omitempty"`
-	UsageStatus string    `json:"usage_status,omitempty"`
+	TeamID         string    `json:"team_id"`
+	RunID          string    `json:"run_id"`
+	Status         RunStatus `json:"status"`
+	ExpectedStatus RunStatus `json:"expected_status,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	UsageStatus    string    `json:"usage_status,omitempty"`
 }
 
 // TaskFilter narrows ListTasks. Empty filter = all tasks (store default).
@@ -676,7 +679,11 @@ func (s *teamService) MarkRunTerminal(ctx context.Context, req MarkRunTerminalRe
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := s.runs.MarkRunTerminal(ctx, tx, req.TeamID, req.RunID, req.Status, req.Error, req.UsageStatus, now()); err != nil {
+	expected := req.ExpectedStatus
+	if expected == "" {
+		expected = RunRunning // backward-compatible default (M4-03 behaviour)
+	}
+	if err := s.runs.MarkRunTerminal(ctx, tx, req.TeamID, req.RunID, req.Status, expected, req.Error, req.UsageStatus, now()); err != nil {
 		return err
 	}
 	return tx.Commit()

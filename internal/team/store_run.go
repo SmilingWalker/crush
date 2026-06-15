@@ -14,7 +14,7 @@ type RunStore interface {
 	GetRun(ctx context.Context, tx *sql.Tx, teamID, runID string) (TeamRun, error)
 	UpdateRunHeartbeat(ctx context.Context, tx *sql.Tx, runID string, at time.Time) error
 	FinishRun(ctx context.Context, tx *sql.Tx, teamID, runID string, prompt, completion, cost int64, at time.Time) error
-	MarkRunTerminal(ctx context.Context, tx *sql.Tx, teamID, runID string, status RunStatus, runErr string, usageStatus string, at time.Time) error
+	MarkRunTerminal(ctx context.Context, tx *sql.Tx, teamID, runID string, status RunStatus, expectedStatus RunStatus, runErr string, usageStatus string, at time.Time) error
 	FindStaleRuns(ctx context.Context, tx *sql.Tx, cutoff time.Time) ([]TeamRun, error)
 }
 
@@ -68,11 +68,10 @@ func (s *sqlcRunStore) FinishRun(ctx context.Context, tx *sql.Tx, teamID, runID 
 
 // MarkRunTerminal transitions a run to a terminal status. expectedStatus is the
 // status the row must currently be in for the UPDATE to match (the M3-02
-// MarkRunTerminal query guards on status = ?); the store hard-codes
-// expectedStatus = RunRunning since terminal transitions are driven off a
-// running run. (If M3-05 needs transitions from other source statuses, the
-// signature widens to accept expectedStatus.)
-func (s *sqlcRunStore) MarkRunTerminal(ctx context.Context, tx *sql.Tx, teamID, runID string, status RunStatus, runErr string, usageStatus string, at time.Time) error {
+// MarkRunTerminal query guards on status = ?). M4-08 widens this from a
+// hard-coded RunRunning to a caller-supplied expectedStatus, so stale runs in
+// 'queued' or 'waiting_permission' can also be transitioned to 'interrupted'.
+func (s *sqlcRunStore) MarkRunTerminal(ctx context.Context, tx *sql.Tx, teamID, runID string, status RunStatus, expectedStatus RunStatus, runErr string, usageStatus string, at time.Time) error {
 	qtx := s.q.WithTx(tx)
 	return qtx.MarkRunTerminal(ctx, db.MarkRunTerminalParams{
 		Status:      string(status),
@@ -80,7 +79,7 @@ func (s *sqlcRunStore) MarkRunTerminal(ctx context.Context, tx *sql.Tx, teamID, 
 		Error:       sql.NullString{String: runErr, Valid: runErr != ""},
 		UsageStatus: sql.NullString{String: usageStatus, Valid: usageStatus != ""},
 		ID:          runID, TeamID: teamID,
-		Status_2: string(RunRunning),
+		Status_2: string(expectedStatus),
 	})
 }
 
