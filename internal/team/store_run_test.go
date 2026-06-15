@@ -160,7 +160,7 @@ func TestRunStore_MarkRunTerminal(t *testing.T) {
 	setStatus("t1", "r1", "running")
 
 	runTx(t, sqlDB, func(tx *sql.Tx) error {
-		return runs.MarkRunTerminal(ctx, tx, "t1", "r1", RunFailed, "boom", "partial", time.UnixMilli(300))
+		return runs.MarkRunTerminal(ctx, tx, "t1", "r1", RunFailed, RunRunning, "boom", "partial", time.UnixMilli(300))
 	})
 	var got TeamRun
 	runTx(t, sqlDB, func(tx *sql.Tx) error {
