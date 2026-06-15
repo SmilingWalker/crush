@@ -156,6 +156,16 @@ func (s *Server) installHandler() {
 	mux.HandleFunc("POST /v1/workspaces/{id}/mcp/refresh-resources", c.handlePostWorkspaceMCPRefreshResources)
 	mux.HandleFunc("POST /v1/workspaces/{id}/mcp/docker/enable", c.handlePostWorkspaceMCPEnableDocker)
 	mux.HandleFunc("POST /v1/workspaces/{id}/mcp/docker/disable", c.handlePostWorkspaceMCPDisableDocker)
+	// M3-07 team-data-domain routes.
+	mux.HandleFunc("POST /v1/workspaces/{id}/teams", c.handlePostWorkspaceTeams)
+	mux.HandleFunc("GET /v1/workspaces/{id}/teams", c.handleGetWorkspaceTeams)
+	mux.HandleFunc("GET /v1/workspaces/{id}/teams/{team_id}", c.handleGetWorkspaceTeam)
+	mux.HandleFunc("POST /v1/workspaces/{id}/teams/{team_id}/members", c.handlePostWorkspaceTeamMembers)
+	mux.HandleFunc("POST /v1/workspaces/{id}/teams/{team_id}/messages", c.handlePostWorkspaceTeamMessages)
+	mux.HandleFunc("POST /v1/workspaces/{id}/teams/{team_id}/tasks", c.handlePostWorkspaceTeamTasks)
+	mux.HandleFunc("PATCH /v1/workspaces/{id}/teams/{team_id}/tasks/{task_id}", c.handlePatchWorkspaceTeamTask)
+	mux.HandleFunc("GET /v1/workspaces/{id}/teams/{team_id}/snapshot", c.handleGetWorkspaceTeamSnapshot)
+	mux.HandleFunc("GET /v1/workspaces/{id}/teams/{team_id}/events", c.handleGetWorkspaceTeamEvents)
 	mux.Handle("/v1/docs/", httpswagger.WrapHandler)
 	s.h = &http.Server{
 		Protocols: &p,
