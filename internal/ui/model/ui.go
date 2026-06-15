@@ -53,6 +53,7 @@ import (
 	"github.com/charmbracelet/crush/internal/ui/logo"
 	"github.com/charmbracelet/crush/internal/ui/notification"
 	"github.com/charmbracelet/crush/internal/ui/styles"
+	"github.com/charmbracelet/crush/internal/ui/team"
 	"github.com/charmbracelet/crush/internal/ui/util"
 	"github.com/charmbracelet/crush/internal/version"
 	"github.com/charmbracelet/crush/internal/workspace"
@@ -276,6 +277,9 @@ type UI struct {
 
 	// hyperCredits is the remaining Hyper credits, updated after each prompt.
 	hyperCredits *int
+
+	// teamPanel is the M3-09 team debug snapshot panel. nil when closed.
+	teamPanel *team.Panel
 
 	// Prompt history for up/down navigation through previous messages.
 	promptHistory struct {
@@ -796,7 +800,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.lastClickTime = time.Now()
 					if cmd != nil {
 						cmds = append(cmds, cmd)
-					}
+				}
 				}
 			}
 		}
@@ -818,7 +822,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.chat.SelectPrev()
 					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
-					}
+				}
 				}
 			} else if msg.Y >= m.chat.Height()-1 {
 				if cmd := m.chat.ScrollByAndAnimate(1); cmd != nil {
@@ -828,7 +832,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.chat.SelectNext()
 					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
-					}
+				}
 				}
 			}
 
@@ -856,7 +860,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, tea.Tick(doubleClickThreshold, func(t time.Time) tea.Msg {
 					if time.Since(m.lastClickTime) >= doubleClickThreshold {
 						return copyChatHighlightMsg{}
-					}
+				}
 					return nil
 				}))
 			}
@@ -880,7 +884,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.chat.SelectPrev()
 					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
-					}
+				}
 				}
 			case tea.MouseWheelDown:
 				if cmd := m.chat.ScrollByAndAnimate(MouseScrollThreshold); cmd != nil {
@@ -889,12 +893,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !m.chat.SelectedItemInView() {
 					if m.chat.AtBottom() {
 						m.chat.SelectLast()
-					} else {
+				} else {
 						m.chat.SelectNext()
-					}
+				}
 					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
-					}
+				}
 				}
 			}
 		}
@@ -1105,7 +1109,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 					// Mark nested tools as simple (compact) rendering.
 					if simplifiable, ok := nestedToolItem.(chat.Compactable); ok {
 						simplifiable.SetCompact(true)
-					}
+				}
 					nestedTools = append(nestedTools, nestedToolItem)
 				}
 			}
@@ -1185,7 +1189,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 				if m.chat.Follow() {
 					if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
-					}
+				}
 				}
 			}
 		}
@@ -1831,6 +1835,13 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 	var cmds []tea.Cmd
 
+	// Delegate key events to the team panel if it is active.
+	if m.teamPanel != nil {
+		if consumed, cmd := m.handleTeamPanelMsg(msg); consumed {
+			return cmd
+		}
+	}
+
 	handleGlobalKeys := func(msg tea.KeyPressMsg) bool {
 		switch {
 		case key.Matches(msg, m.keyMap.Help):
@@ -1852,6 +1863,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 			return true
+			case key.Matches(msg, m.keyMap.TeamPanel):
+				if m.com.Config().Options.IsAgentTeamEnabled() {
+					m.toggleTeamPanel()
+				}
+				return true
 		case key.Matches(msg, m.keyMap.Chat.Details) && m.isCompact:
 			m.detailsOpen = !m.detailsOpen
 			m.updateLayoutAndSize()
@@ -1947,7 +1963,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						}
 					case completions.ClosedMsg:
 						m.completionsOpen = false
-					}
+				}
 					return tea.Batch(cmds...)
 				}
 			}
@@ -1979,7 +1995,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					m.textarea.SetValue(before)
 					if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
 						cmds = append(cmds, cmd)
-					}
+				}
 					break
 				}
 
@@ -2072,7 +2088,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						m.completionsPositionStart = m.completionsPosition()
 						depth, limit := m.com.Config().Options.TUI.Completions.Limits()
 						cmds = append(cmds, m.completions.Open(depth, limit))
-					}
+				}
 				}
 
 				// remove the details if they are open when user starts typing
@@ -2096,10 +2112,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					// Close completions if cursor moved before start.
 					if newIdx <= m.completionsStartIndex {
 						m.closeCompletions()
-					} else if msg.String() == "space" {
+				} else if msg.String() == "space" {
 						// Close on space.
 						m.closeCompletions()
-					} else {
+				} else {
 						// Extract current word and filter.
 						word := m.textareaWord()
 						if strings.HasPrefix(word, "@") {
@@ -2108,7 +2124,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						} else if m.completionsOpen {
 							m.closeCompletions()
 						}
-					}
+				}
 				}
 			}
 		case uiFocusMain:
@@ -2139,7 +2155,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					m.chat.SelectPrev()
 					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
-					}
+				}
 				}
 			case key.Matches(msg, m.keyMap.Chat.Down):
 				if cmd := m.chat.ScrollByAndAnimate(1); cmd != nil {
@@ -2149,7 +2165,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					m.chat.SelectNext()
 					if cmd := m.chat.ScrollToSelectedAndAnimate(); cmd != nil {
 						cmds = append(cmds, cmd)
-					}
+				}
 				}
 			case key.Matches(msg, m.keyMap.Chat.UpOneItem):
 				m.chat.SelectPrev()
@@ -2366,6 +2382,15 @@ func (m *UI) View() tea.View {
 
 	content = strings.Join(contentLines, "\n")
 
+	// Render team panel overlay if active.
+	if m.teamPanel != nil {
+		teamContent := m.renderTeamPanel()
+		if teamContent != "" {
+			v.Content = teamContent
+			return v
+		}
+	}
+
 	v.Content = content
 	if m.progressBarEnabled && m.sendProgressBar && m.isAgentBusy() {
 		// HACK: use a random percentage to prevent ghostty from hiding it
@@ -2525,7 +2550,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 						k.Editor.AttachmentDeleteMode,
 						k.Editor.DeleteAllAttachments,
 						k.Editor.Escape,
-					},
+				},
 				)
 			}
 		case uiFocusMain:
@@ -2580,7 +2605,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 						k.Editor.AttachmentDeleteMode,
 						k.Editor.DeleteAllAttachments,
 						k.Editor.Escape,
-					},
+				},
 				)
 			}
 		}
