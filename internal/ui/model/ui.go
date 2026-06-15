@@ -53,6 +53,7 @@ import (
 	"github.com/charmbracelet/crush/internal/ui/logo"
 	"github.com/charmbracelet/crush/internal/ui/notification"
 	"github.com/charmbracelet/crush/internal/ui/styles"
+	"github.com/charmbracelet/crush/internal/ui/team"
 	"github.com/charmbracelet/crush/internal/ui/util"
 	"github.com/charmbracelet/crush/internal/version"
 	"github.com/charmbracelet/crush/internal/workspace"
@@ -276,6 +277,9 @@ type UI struct {
 
 	// hyperCredits is the remaining Hyper credits, updated after each prompt.
 	hyperCredits *int
+
+	// teamPanel is the M3-09 team debug snapshot panel. nil when closed.
+	teamPanel *team.Panel
 
 	// Prompt history for up/down navigation through previous messages.
 	promptHistory struct {
