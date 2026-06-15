@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/team"
 )
 
 // AppWorkspace implements the Workspace interface by delegating
@@ -28,6 +29,10 @@ import (
 type AppWorkspace struct {
 	app   *app.App
 	store *config.ConfigStore
+
+	// team is the optional M3-05 team.Service backing TeamWorkspace methods
+	// (app_team.go). Injected via SetTeamService; nil until M3-08 wires it.
+	team team.Service
 }
 
 // NewAppWorkspace creates a new AppWorkspace wrapping the given app
