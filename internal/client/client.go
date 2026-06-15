@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/netutil"
 	"github.com/charmbracelet/crush/internal/proto"
-	"github.com/charmbracelet/crush/internal/server"
 	"github.com/google/uuid"
 )
 
@@ -32,7 +32,7 @@ type Client struct {
 
 // DefaultClient creates a new [Client] connected to the default server address.
 func DefaultClient(path string) (*Client, error) {
-	host, err := server.ParseHostURL(server.DefaultHost())
+	host, err := netutil.ParseHostURL(netutil.DefaultHost())
 	if err != nil {
 		return nil, err
 	}

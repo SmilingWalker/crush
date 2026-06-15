@@ -7,12 +7,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/user"
-	"runtime"
-	"strings"
 
 	"github.com/charmbracelet/crush/internal/backend"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/netutil"
 	_ "github.com/charmbracelet/crush/internal/swagger"
 	httpswagger "github.com/swaggo/http-swagger/v2"
 )
@@ -20,40 +18,19 @@ import (
 // ErrServerClosed is returned when the server is closed.
 var ErrServerClosed = http.ErrServerClosed
 
-// ParseHostURL parses a host URL into a [url.URL].
+// ParseHostURL parses a host URL into a [url.URL]. Delegates to
+// netutil.ParseHostURL; kept here as a thin re-export so existing
+// server-package callers (and cmd/*) are unchanged. The canonical
+// implementation lives in internal/netutil so internal/client can use it
+// without importing internal/server (M3-07 cycle-break).
 func ParseHostURL(host string) (*url.URL, error) {
-	proto, addr, ok := strings.Cut(host, "://")
-	if !ok {
-		return nil, fmt.Errorf("invalid host format: %s", host)
-	}
-
-	var basePath string
-	if proto == "tcp" {
-		parsed, err := url.Parse("tcp://" + addr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid tcp address: %v", err)
-		}
-		addr = parsed.Host
-		basePath = parsed.Path
-	}
-	return &url.URL{
-		Scheme: proto,
-		Host:   addr,
-		Path:   basePath,
-	}, nil
+	return netutil.ParseHostURL(host)
 }
 
-// DefaultHost returns the default server host.
+// DefaultHost returns the default server host. Delegates to netutil.DefaultHost;
+// see ParseHostURL's doc comment for why the impl lives in netutil.
 func DefaultHost() string {
-	sock := "crush.sock"
-	usr, err := user.Current()
-	if err == nil && usr.Uid != "" {
-		sock = fmt.Sprintf("crush-%s.sock", usr.Uid)
-	}
-	if runtime.GOOS == "windows" {
-		return fmt.Sprintf("npipe:////./pipe/%s", sock)
-	}
-	return fmt.Sprintf("unix:///tmp/%s", sock)
+	return netutil.DefaultHost()
 }
 
 // Server represents a Crush server bound to a specific address.
