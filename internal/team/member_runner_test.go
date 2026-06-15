@@ -340,8 +340,47 @@ func TestMemberRunner_actorCtx(t *testing.T) {
 }
 
 func TestMemberRunner_buildPrompt(t *testing.T) {
-	mr := &MemberRunner{ID: "m1", Role: "coder"}
-	prompt := mr.buildPrompt(WakeSourceExplicit)
-	assert.Contains(t, prompt, "explicit")
+	mr := &MemberRunner{ID: "m1", TeamID: "t1", Role: "coder"}
+	prompt, err := mr.buildPrompt(context.Background(), WakeSourceExplicit)
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "[member_identity]")
 	assert.Contains(t, prompt, "m1")
+	assert.Contains(t, prompt, "coder")
+}
+
+func TestMemberRunner_buildPrompt_Integrated(t *testing.T) {
+	// Full prompt assembly via MemberRunner: verifies that the M4-05
+	// PromptBuilder integration produces a valid prompt with all 9 sections
+	// in correct order and no errors.
+	mr := &MemberRunner{
+		ID:     "m1",
+		TeamID: "t1",
+		Role:   "coder",
+		svc:    nil, // nil svc → MailboxReader nil → "(no mailbox available)" fallback
+	}
+	prompt, err := mr.buildPrompt(context.Background(), WakeSourceExplicit)
+	require.NoError(t, err)
+
+	// All 9 section headers present.
+	assert.Contains(t, prompt, "[system_policy]")
+	assert.Contains(t, prompt, "[member_identity]")
+	assert.Contains(t, prompt, "[current_task]")
+	assert.Contains(t, prompt, "[direct_messages]")
+	assert.Contains(t, prompt, "[dependency_results]")
+	assert.Contains(t, prompt, "[leader_instruction]")
+	assert.Contains(t, prompt, "[broadcast_messages]")
+	assert.Contains(t, prompt, "[session_summary]")
+	assert.Contains(t, prompt, "[reporting_rules]")
+
+	// Section order verified.
+	systemPos := indexOf(t, prompt, "[system_policy]")
+	taskPos := indexOf(t, prompt, "[current_task]")
+	directPos := indexOf(t, prompt, "[direct_messages]")
+	broadcastPos := indexOf(t, prompt, "[broadcast_messages]")
+	reportingPos := indexOf(t, prompt, "[reporting_rules]")
+
+	assert.True(t, systemPos < taskPos)
+	assert.True(t, taskPos < directPos)
+	assert.True(t, directPos < broadcastPos)
+	assert.True(t, broadcastPos < reportingPos)
 }
