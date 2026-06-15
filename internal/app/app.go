@@ -124,13 +124,14 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		agentNotifications: pubsub.NewBroker[notify.Notification](),
 	}
 
-	// Construct the team.Service from the shared *sql.DB. The 6 stores each
+	// Construct the team.Service from the shared *sql.DB. The 7 stores each
 	// wrap a *db.Queries (q above); the Service orchestrates them. Feature
 	// gate controlled by config.Options.IsAgentTeamEnabled (M3-08).
 	app.team = team.NewService(
 		conn,
 		team.NewTeamStore(q), team.NewMemberStore(q), team.NewTaskStore(q),
 		team.NewRunStore(q), team.NewEventStore(q), team.NewAuditStore(q),
+		team.NewMailboxStore(q),
 		team.WithEnabledGate(func() bool { return cfg.Options.IsAgentTeamEnabled() }),
 	)
 

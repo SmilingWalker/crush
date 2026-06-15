@@ -769,3 +769,127 @@ func (q *Queries) ListAudit(ctx context.Context, arg ListAuditParams) ([]TeamAud
 	}
 	return items, nil
 }
+
+const insertMessage = `-- name: InsertMessage :one
+INSERT INTO team_mailbox_messages (id, team_id, from_member_id, kind, summary, payload, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+RETURNING id, team_id, from_member_id, kind, summary, payload, created_at
+`
+
+type InsertMessageParams struct {
+	ID           string `json:"id"`
+	TeamID       string `json:"team_id"`
+	FromMemberID string `json:"from_member_id"`
+	Kind         string `json:"kind"`
+	Summary      string `json:"summary"`
+	Payload      string `json:"payload"`
+	CreatedAt    int64  `json:"created_at"`
+}
+
+func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (TeamMailboxMessage, error) {
+	row := q.queryRow(ctx, q.insertMessageStmt, insertMessage,
+		arg.ID, arg.TeamID, arg.FromMemberID, arg.Kind, arg.Summary, arg.Payload, arg.CreatedAt,
+	)
+	var i TeamMailboxMessage
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.FromMemberID, &i.Kind, &i.Summary, &i.Payload, &i.CreatedAt,
+	)
+	return i, err
+}
+
+const getUnreadMessages = `-- name: GetUnreadMessages :many
+SELECT m.id, m.team_id, m.from_member_id, m.kind, m.summary, m.payload, m.created_at
+FROM team_mailbox_messages m
+JOIN team_message_receipts r ON r.message_id = m.id
+WHERE r.to_member_id = ? AND r.read_at IS NULL
+ORDER BY m.created_at ASC
+LIMIT ?
+`
+
+type GetUnreadMessagesParams struct {
+	ToMemberID string `json:"to_member_id"`
+	Limit      int64  `json:"limit"`
+}
+
+func (q *Queries) GetUnreadMessages(ctx context.Context, arg GetUnreadMessagesParams) ([]TeamMailboxMessage, error) {
+	rows, err := q.query(ctx, q.getUnreadMessagesStmt, getUnreadMessages, arg.ToMemberID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TeamMailboxMessage{}
+	for rows.Next() {
+		var i TeamMailboxMessage
+		if err := rows.Scan(
+			&i.ID, &i.TeamID, &i.FromMemberID, &i.Kind, &i.Summary, &i.Payload, &i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const insertReceipt = `-- name: InsertReceipt :exec
+INSERT INTO team_message_receipts (id, message_id, to_member_id, delivered_at, read_at)
+VALUES (?, ?, ?, ?, ?)
+`
+
+type InsertReceiptParams struct {
+	ID          string        `json:"id"`
+	MessageID   string        `json:"message_id"`
+	ToMemberID  string        `json:"to_member_id"`
+	DeliveredAt sql.NullInt64 `json:"delivered_at"`
+	ReadAt      sql.NullInt64 `json:"read_at"`
+}
+
+func (q *Queries) InsertReceipt(ctx context.Context, arg InsertReceiptParams) error {
+	_, err := q.exec(ctx, q.insertReceiptStmt, insertReceipt,
+		arg.ID, arg.MessageID, arg.ToMemberID, arg.DeliveredAt, arg.ReadAt,
+	)
+	return err
+}
+
+const markDelivered = `-- name: MarkDelivered :exec
+UPDATE team_message_receipts
+SET delivered_at = ?
+WHERE message_id = ? AND to_member_id = ?
+`
+
+type MarkDeliveredParams struct {
+	DeliveredAt int64  `json:"delivered_at"`
+	MessageID   string `json:"message_id"`
+	ToMemberID  string `json:"to_member_id"`
+}
+
+func (q *Queries) MarkDelivered(ctx context.Context, arg MarkDeliveredParams) error {
+	_, err := q.exec(ctx, q.markDeliveredStmt, markDelivered,
+		arg.DeliveredAt, arg.MessageID, arg.ToMemberID,
+	)
+	return err
+}
+
+const markRead = `-- name: MarkRead :exec
+UPDATE team_message_receipts
+SET read_at = ?
+WHERE message_id = ? AND to_member_id = ?
+`
+
+type MarkReadParams struct {
+	ReadAt     int64  `json:"read_at"`
+	MessageID  string `json:"message_id"`
+	ToMemberID string `json:"to_member_id"`
+}
+
+func (q *Queries) MarkRead(ctx context.Context, arg MarkReadParams) error {
+	_, err := q.exec(ctx, q.markReadStmt, markRead,
+		arg.ReadAt, arg.MessageID, arg.ToMemberID,
+	)
+	return err
+}

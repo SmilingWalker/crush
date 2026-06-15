@@ -119,3 +119,31 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListAudit :many
 SELECT * FROM team_audit_events WHERE team_id = ? ORDER BY created_at DESC LIMIT ?;
+
+-- M4-04: Mailbox queries
+
+-- name: InsertMessage :one
+INSERT INTO team_mailbox_messages (id, team_id, from_member_id, kind, summary, payload, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+RETURNING *;
+
+-- name: GetUnreadMessages :many
+SELECT m.* FROM team_mailbox_messages m
+JOIN team_message_receipts r ON r.message_id = m.id
+WHERE r.to_member_id = ? AND r.read_at IS NULL
+ORDER BY m.created_at ASC
+LIMIT ?;
+
+-- name: InsertReceipt :exec
+INSERT INTO team_message_receipts (id, message_id, to_member_id, delivered_at, read_at)
+VALUES (?, ?, ?, ?, ?);
+
+-- name: MarkDelivered :exec
+UPDATE team_message_receipts
+SET delivered_at = ?
+WHERE message_id = ? AND to_member_id = ?;
+
+-- name: MarkRead :exec
+UPDATE team_message_receipts
+SET read_at = ?
+WHERE message_id = ? AND to_member_id = ?;

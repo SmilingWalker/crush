@@ -166,3 +166,21 @@ type TeamAuditEvent struct {
 	Scope        sql.NullString `json:"scope"`
 	CreatedAt    int64          `json:"created_at"`
 }
+
+type TeamMailboxMessage struct {
+	ID           string `json:"id"`
+	TeamID       string `json:"team_id"`
+	FromMemberID string `json:"from_member_id"`
+	Kind         string `json:"kind"`
+	Summary      string `json:"summary"`
+	Payload      string `json:"payload"`
+	CreatedAt    int64  `json:"created_at"`
+}
+
+type TeamMessageReceipt struct {
+	ID          string        `json:"id"`
+	MessageID   string        `json:"message_id"`
+	ToMemberID  string        `json:"to_member_id"`
+	DeliveredAt sql.NullInt64 `json:"delivered_at"`
+	ReadAt      sql.NullInt64 `json:"read_at"`
+}
