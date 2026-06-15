@@ -243,3 +243,122 @@ func TestScheduler_StartHeartbeat_ParentCtxCancelStopsGoroutine(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	cancel() // should not panic on already-cancelled context
 }
+
+func TestScheduler_RecoverStaleRuns_NoStaleRuns(t *testing.T) {
+	s, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+	run, err := svc.StartRun(ctx, StartRunRequest{TeamID: snap.Team.ID, MemberID: m.ID, SessionID: "sess-1"})
+	require.NoError(t, err)
+	// Fresh heartbeat → not stale.
+	require.NoError(t, svc.HeartbeatRun(ctx, run.ID))
+
+	report, err := s.RecoverStaleRuns(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, report.InterruptedCount)
+}
+
+func TestScheduler_RecoverStaleRuns_SingleStaleRun(t *testing.T) {
+	_, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+	run, err := svc.StartRun(ctx, StartRunRequest{TeamID: snap.Team.ID, MemberID: m.ID, SessionID: "sess-1"})
+	require.NoError(t, err)
+
+	// Near-zero timeout → run is immediately stale.
+	fastCfg := DefaultSchedulerConfig()
+	fastCfg.HeartbeatTimeout = 1 * time.Millisecond
+	fastS := NewScheduler(svc, fastCfg)
+	time.Sleep(50 * time.Millisecond)
+
+	report, err := fastS.RecoverStaleRuns(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.InterruptedCount)
+	require.Len(t, report.Details, 1)
+	assert.Equal(t, run.ID, report.Details[0].RunID)
+	assert.Equal(t, string(RunRunning), report.Details[0].Status)
+	// The run is now interrupted; it disappears from FindStaleRuns
+	// (status filter excludes 'interrupted') and thus from DebugSnapshot.
+	// Verified via the RecoveryReport and idempotency test.
+}
+
+func TestScheduler_RecoverStaleRuns_MultipleStale(t *testing.T) {
+	_, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+
+	for i := range 3 {
+		_, err := svc.StartRun(ctx, StartRunRequest{TeamID: snap.Team.ID, MemberID: m.ID, SessionID: "sess-" + string(rune('a'+i))})
+		require.NoError(t, err)
+	}
+
+	fastCfg := DefaultSchedulerConfig()
+	fastCfg.HeartbeatTimeout = 1 * time.Millisecond
+	fastS := NewScheduler(svc, fastCfg)
+	time.Sleep(50 * time.Millisecond)
+
+	report, err := fastS.RecoverStaleRuns(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, report.InterruptedCount)
+	assert.Len(t, report.Details, 3)
+	// Interrupted runs disappear from FindStaleRuns (status filter)
+	// and thus from DebugSnapshot. Verified via the report.
+}
+
+func TestScheduler_RecoverStaleRuns_CompletedRunsExcluded(t *testing.T) {
+	s, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+
+	// Run that finishes normally.
+	run, err := svc.StartRun(ctx, StartRunRequest{TeamID: snap.Team.ID, MemberID: m.ID, SessionID: "sess-1"})
+	require.NoError(t, err)
+	require.NoError(t, svc.FinishRun(ctx, FinishRunRequest{TeamID: snap.Team.ID, RunID: run.ID, PromptTokens: 10, CompletionTokens: 5, CostMicros: 3}))
+
+	report, err := s.RecoverStaleRuns(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, report.InterruptedCount, "completed runs are filtered by FindStaleRuns status guard")
+}
+
+func TestScheduler_RecoverStaleRuns_Idempotent(t *testing.T) {
+	_, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+	_, err = svc.StartRun(ctx, StartRunRequest{TeamID: snap.Team.ID, MemberID: m.ID, SessionID: "sess-1"})
+	require.NoError(t, err)
+
+	fastCfg := DefaultSchedulerConfig()
+	fastCfg.HeartbeatTimeout = 1 * time.Millisecond
+	fastS := NewScheduler(svc, fastCfg)
+	time.Sleep(50 * time.Millisecond)
+
+	report1, err := fastS.RecoverStaleRuns(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report1.InterruptedCount)
+
+	// Second pass: already-interrupted runs are excluded by FindStaleRuns
+	// (status IN ('running','waiting_permission','queued') — NOT 'interrupted').
+	report2, err := fastS.RecoverStaleRuns(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, report2.InterruptedCount, "second pass finds no stale runs (already interrupted)")
+}

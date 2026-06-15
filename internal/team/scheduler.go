@@ -75,3 +75,53 @@ func (s *Scheduler) StartHeartbeat(ctx context.Context, runID string) (func(), e
 	}()
 	return cancel, nil
 }
+
+// RecoverStaleRuns finds runs whose heartbeat_at is older than
+// cfg.HeartbeatTimeout from now, marks each as interrupted via
+// MarkRunTerminal, and returns a RecoveryReport. Only runs with status IN
+// ('running','waiting_permission','queued') are returned by FindStaleRuns;
+// MarkRunTerminal's status guard ('running') means only stale runs in
+// 'running' are successfully marked (Seam 10 — M4-08 widens this).
+//
+// Idempotent: once a run is marked interrupted, it no longer matches the
+// FindStaleRuns status filter, so a second recovery pass finds zero stale
+// runs (unless new runs became stale in the meantime).
+func (s *Scheduler) RecoverStaleRuns(ctx context.Context) (*RecoveryReport, error) {
+	cutoff := time.Now().Add(-s.cfg.HeartbeatTimeout)
+	stale, err := s.svc.FindStaleRuns(ctx, cutoff)
+	if err != nil {
+		return nil, err
+	}
+
+	report := &RecoveryReport{}
+	for _, run := range stale {
+		info := StaleRunInfo{
+			RunID:    run.ID,
+			TeamID:   run.TeamID,
+			MemberID: run.MemberID,
+			Status:   string(run.Status),
+		}
+		if run.HeartbeatAt != nil {
+			info.LastHeartbeat = *run.HeartbeatAt
+		}
+
+		// MarkRunTerminal guards on status='running' (Seam 10). A stale run in
+		// 'queued' or 'waiting_permission' will fail to match — skip it silently.
+		// M4-08 widens the guard to accept those statuses too.
+		if err := s.svc.MarkRunTerminal(ctx, MarkRunTerminalRequest{
+			TeamID: run.TeamID,
+			RunID:  run.ID,
+			Status: RunInterrupted,
+			Error:  "heartbeat timeout — run interrupted by stale recovery",
+		}); err != nil {
+			// MarkRunTerminal failed — likely the run is not in 'running' status.
+			// Don't count it as interrupted; M4-08 adds structured error tracking.
+			continue
+		}
+
+		report.InterruptedCount++
+		report.Details = append(report.Details, info)
+	}
+
+	return report, nil
+}
