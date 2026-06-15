@@ -2,6 +2,8 @@ package team
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,4 +58,74 @@ func TestService_FindStaleRuns(t *testing.T) {
 	require.Len(t, stale, 1)
 	assert.Equal(t, run.ID, stale[0].ID)
 	assert.Equal(t, RunRunning, stale[0].Status)
+}
+
+// newSchedulerFixture builds a real Service over in-memory SQLite and wraps it
+// in a Scheduler with default config.
+func newSchedulerFixture(t *testing.T) (*Scheduler, Service) {
+	t.Helper()
+	svc, _ := newServiceFixture(t)
+	s := NewScheduler(svc, DefaultSchedulerConfig())
+	return s, svc
+}
+
+func TestScheduler_ClaimNextTask_DelegatesToService(t *testing.T) {
+	s, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+	_, err = svc.CreateTask(ctx, CreateTaskRequest{TeamID: snap.Team.ID, Title: "task", CreatedByMemberID: m.ID, Priority: 5})
+	require.NoError(t, err)
+
+	claimed, err := s.ClaimNextTask(ctx, ClaimNextTaskRequest{TeamID: snap.Team.ID, AssigneeMemberID: m.ID})
+	require.NoError(t, err)
+	assert.Equal(t, TaskAssigned, claimed.Status)
+	assert.Equal(t, m.ID, *claimed.AssigneeMemberID)
+
+	_, err = s.ClaimNextTask(ctx, ClaimNextTaskRequest{TeamID: snap.Team.ID, AssigneeMemberID: m.ID})
+	require.ErrorIs(t, err, ErrNoTaskAvailable)
+}
+
+// TestScheduler_ClaimNextTask_ConcurrentSingleWinner is acceptance #1: 10
+// goroutines race to claim ONE queued task → exactly 1 winner. Uses the same
+// SetMaxOpenConns(1) pattern as M3-04 (Seam 8).
+func TestScheduler_ClaimNextTask_ConcurrentSingleWinner(t *testing.T) {
+	s, svc := newSchedulerFixture(t)
+	ctx := context.Background()
+
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+	_, err = svc.CreateTask(ctx, CreateTaskRequest{TeamID: snap.Team.ID, Title: "only one", CreatedByMemberID: m.ID, Priority: 5})
+	require.NoError(t, err)
+
+	const N = 10
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		wins    int
+		noAvail int
+	)
+	for range N {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := s.ClaimNextTask(ctx, ClaimNextTaskRequest{TeamID: snap.Team.ID, AssigneeMemberID: m.ID})
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				wins++
+			} else if errors.Is(err, ErrNoTaskAvailable) {
+				noAvail++
+			}
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, 1, wins, "exactly 1 goroutine wins the single task")
+	assert.Equal(t, 9, noAvail, "the other 9 goroutines get ErrNoTaskAvailable")
 }
