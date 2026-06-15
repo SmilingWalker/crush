@@ -6,6 +6,7 @@ package team
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -180,6 +181,168 @@ func (t *TeamCompactItem) renderCompactCard(width int, content string) string {
 		Width(width - 2)
 
 	return cardStyle.Render(content)
+}
+
+// RenderExpanded renders the full member status list capped at maxLines lines.
+// When there are more members than can fit, a truncation footer is shown with
+// scroll hints. The scrollOffset field controls which members are visible.
+//
+// Layout (max 24 lines):
+//
+//	┌─ ● TeamName ──────────────────────────────────┐
+//	│ 5 members · 2 active                            │
+//	│                                                 │
+//	│ ● Alice   planner     running    T1  write_plan │
+//	│ ◇ Bob     programmer  idle       —    —         │
+//	│ ✓ Diana   reviewer    stopped    T2  —          │
+//	│                                                 │
+//	│ ... and 2 more members                          │
+//	│ j/k scroll  space collapse                      │
+//	└─────────────────────────────────────────────────┘
+func (t *TeamCompactItem) RenderExpanded(width int, maxLines int) string {
+	if width < 40 {
+		width = 40
+	}
+	if maxLines <= 0 {
+		maxLines = 24
+	}
+
+	name := t.teamName
+	if name == "" {
+		name = t.status.TeamID
+	}
+
+	memberCount := len(t.status.Members)
+	active := t.status.ActiveRuns
+
+	// Empty state
+	if memberCount == 0 && name == "" {
+		return t.renderCompactCard(width, "No data")
+	}
+
+	// Header line: icon + team name
+	icon := StatusIcon(t.teamStatus)
+	if icon == " " && active > 0 {
+		icon = "●"
+	}
+	headerStyle := lipgloss.NewStyle().Bold(true).Width(width).Padding(0, 1)
+	header := headerStyle.Render(fmt.Sprintf("%s %s", icon, name))
+
+	// Summary line
+	summaryParts := []string{fmt.Sprintf("%d members", memberCount)}
+	if active > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("%d active", active))
+	}
+	if t.costMicros > 0 {
+		summaryParts = append(summaryParts, formatCost(t.costMicros))
+	}
+	summaryStyle := lipgloss.NewStyle().Width(width).Padding(0, 1).Foreground(lipgloss.Color("241"))
+	summary := summaryStyle.Render(strings.Join(summaryParts, " · "))
+
+	// Collect sorted member names for stable output
+	memberNames := make([]string, 0, len(t.status.Members))
+	for name := range t.status.Members {
+		memberNames = append(memberNames, name)
+	}
+	// Sort for deterministic output
+	sort.Strings(memberNames)
+
+	// Calculate how many member rows can fit
+	// Overhead: 2 (border) + 2 (header+summary) + 1 (blank above members)
+	//          + 2 (blank below + nav) + 1 (footer if truncated)
+	overhead := 8 // border-top + header + summary + blank + blank + nav + blank + border-bottom
+	truncated := false
+	maxMemberRows := maxLines - overhead
+	if maxMemberRows < 0 {
+		maxMemberRows = 0
+	}
+
+	// Apply scroll offset
+	startIdx := t.scrollOffset
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	if startIdx > len(memberNames) {
+		startIdx = len(memberNames)
+	}
+
+	visibleNames := memberNames[startIdx:]
+	if len(visibleNames) > maxMemberRows {
+		visibleNames = visibleNames[:maxMemberRows]
+		truncated = true
+	}
+
+	hiddenAbove := startIdx
+	hiddenBelow := len(memberNames) - startIdx - len(visibleNames)
+	if hiddenBelow < 0 {
+		hiddenBelow = 0
+	}
+
+	// Build member rows
+	itemStyle := lipgloss.NewStyle().Width(width).Padding(0, 1)
+	var memberLines []string
+	if hiddenAbove > 0 {
+		memberLines = append(memberLines, itemStyle.Foreground(lipgloss.Color("241")).Render(
+			fmt.Sprintf("  ... %d members above", hiddenAbove),
+		))
+	}
+	for _, name := range visibleNames {
+		m := t.status.Members[name]
+		row := t.renderMemberRow(width-4, name, m)
+		memberLines = append(memberLines, itemStyle.Render(row))
+	}
+	if truncated && hiddenBelow > 0 {
+		memberLines = append(memberLines, itemStyle.Foreground(lipgloss.Color("241")).Render(
+			fmt.Sprintf("  ... and %d more members", hiddenBelow),
+		))
+	}
+
+	// Navigation footer
+	navStyle := lipgloss.NewStyle().Width(width).Padding(0, 1).Foreground(lipgloss.Color("241"))
+	nav := navStyle.Render("j/k scroll  space collapse")
+
+	var bodyLines []string
+	bodyLines = append(bodyLines, header, summary)
+	if len(memberLines) > 0 {
+		bodyLines = append(bodyLines, "") // blank separator
+		bodyLines = append(bodyLines, memberLines...)
+	}
+	bodyLines = append(bodyLines, "", nav) // blank + nav
+
+	return t.renderCompactCard(width, strings.Join(bodyLines, "\n"))
+}
+
+// renderMemberRow formats a single member's status row for the expanded view.
+// Columns: icon, name (12), role (12), status (12), task (8), tool (rest).
+func (t *TeamCompactItem) renderMemberRow(width int, name string, m team.MemberRuntimeState) string {
+	icon := StatusIcon(string(m.State))
+
+	task := m.CurrentTask
+	if task == "" {
+		task = "—"
+	}
+	tool := m.CurrentTool
+	if tool == "" {
+		tool = "—"
+	}
+
+	// Fixed-width columns
+	colName := truncateOrPad(name, 12)
+	colRole := truncateOrPad(m.Role, 12)
+	colStatus := truncateOrPad(string(m.State), 12)
+	colTask := truncateOrPad(task, 10)
+	colTool := tool // variable
+
+	return fmt.Sprintf("%s %s %s %s %s %s",
+		icon, colName, colRole, colStatus, colTask, colTool)
+}
+
+// truncateOrPad truncates s to maxLen chars or right-pads with spaces.
+func truncateOrPad(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen-1] + "…"
+	}
+	return fmt.Sprintf("%-*s", maxLen, s)
 }
 
 // --- helpers ---
