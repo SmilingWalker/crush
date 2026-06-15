@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/charmbracelet/crush/internal/team"
 )
 
 // NewForTest constructs a minimal [App] suitable for in-process tests
@@ -66,4 +67,12 @@ func (app *App) ShutdownForTest() {
 		}
 	}
 	app.cleanupFuncs = nil
+}
+
+// SetTeamServiceForTest injects a team.Service for use in handler-level
+// integration tests (M3-07). The service is NOT constructed by NewForTest
+// because it requires a *sql.DB; callers build the service themselves and
+// inject it via this method.
+func (app *App) SetTeamServiceForTest(svc team.Service) {
+	app.team = svc
 }
