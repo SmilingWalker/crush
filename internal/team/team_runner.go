@@ -90,14 +90,67 @@ func NewTeamRunner(svc Service, factory agent.AgentFactory) TeamRunner {
 }
 
 // StartTeam loads all non-terminal members from the DB and starts their
-// MemberRunners. Already-registered members are left untouched.
+// MemberRunners. Already-registered members are left untouched; only members
+// that are not in the registry yet are created and started.
 func (t *teamRunner) StartTeam(ctx context.Context, teamID string) error {
-	return fmt.Errorf("not implemented")
+	members, err := t.svc.ListMembers(ctx, teamID)
+	if err != nil {
+		return fmt.Errorf("list members: %w", err)
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for _, member := range members {
+		if member.Status == MemberStopped || member.Status == MemberFailed {
+			continue
+		}
+		// Skip already-registered members.
+		if _, exists := t.members[member.ID]; exists {
+			continue
+		}
+		spec := agent.AgentSpec{}
+		mr := NewMemberRunner(member.ID, teamID, spec, t.factory, t.svc)
+		t.members[member.ID] = mr
+		go mr.Start(ctx)
+	}
+	return nil
 }
 
-// StopTeam shuts down all registered members using the given StopMode.
+// StopTeam shuts down all registered members for the given team using the
+// specified StopMode. For StopGraceful, it polls each member's state until
+// idle/stopped/failed with a per-member deadline; for StopCancel/StopForce,
+// it calls Stop() immediately.
 func (t *teamRunner) StopTeam(ctx context.Context, teamID string, mode StopMode) error {
-	return fmt.Errorf("not implemented")
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for _, mr := range t.members {
+		if mr.TeamID != teamID {
+			continue
+		}
+		switch mode {
+		case StopGraceful:
+			deadline := time.Now().Add(30 * time.Second)
+			for time.Now().Before(deadline) {
+				mr.mu.Lock()
+				state := mr.State
+				mr.mu.Unlock()
+				if state == MemberIdle || state == MemberStopped || state == MemberFailed {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+			mr.Stop()
+		case StopCancel, StopForce:
+			mr.Stop()
+		}
+	}
+	return nil
 }
 
 // SpawnMember creates a member in the DB, builds a MemberRunner, starts it,
@@ -127,8 +180,38 @@ func (t *teamRunner) SpawnMember(ctx context.Context, teamID, name, role, agentP
 }
 
 // StopMember looks up a member by ID and stops it with the given mode.
+// For StopGraceful, it polls the member's state until idle/stopped/failed
+// (with a 30s deadline) before calling Stop(). For StopCancel/StopForce,
+// it calls Stop() immediately.
 func (t *teamRunner) StopMember(ctx context.Context, teamID, memberID string, mode StopMode) error {
-	return fmt.Errorf("not implemented")
+	t.mu.RLock()
+	mr, ok := t.members[memberID]
+	t.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("member %s not found in team %s", memberID, teamID)
+	}
+
+	switch mode {
+	case StopGraceful:
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			mr.mu.Lock()
+			state := mr.State
+			mr.mu.Unlock()
+			if state == MemberIdle || state == MemberStopped || state == MemberFailed {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+		mr.Stop()
+	case StopCancel, StopForce:
+		mr.Stop()
+	}
+	return nil
 }
 
 // CancelMemberTurn cancels a member's current turn. Idempotent — calling it

@@ -75,13 +75,139 @@ func TestTeamRunner_SpawnMember_E2E(t *testing.T) {
 	assert.Equal(t, "test-member", member.Name)
 	assert.Equal(t, "coder", member.Role)
 
-	// Wait for the background goroutine to start and complete the turn.
+	// Wait for the background goroutine to start and settle.
 	time.Sleep(200 * time.Millisecond)
 
-	// Verify member is registered and status reflects idle after turn.
+	// Verify member is registered and status reflects idle after start.
 	status, err := tr.Status(context.Background(), snap.Team.ID)
 	require.NoError(t, err)
 	ms, ok := status.Members[member.ID]
 	require.True(t, ok, "member %s should be registered", member.ID)
 	assert.Equal(t, MemberIdle, ms.State)
+}
+
+// --- Task 3: StartTeam / StopMember / StopTeam ---
+
+func TestTeamRunner_StopMember_Graceful(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-stopm", LeaderSessionID: "lead-stopm", Name: "stop-member-test",
+	})
+	require.NoError(t, err)
+
+	mockRunner := &recordingTurnRunner{
+		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
+	}
+	factory := &stubAgentFactory{runner: mockRunner}
+	tr := NewTeamRunner(svc, factory)
+
+	member, err := tr.SpawnMember(context.Background(), snap.Team.ID, "m1", "coder", "{}", agent.AgentSpec{})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Stop the member gracefully.
+	err = tr.StopMember(context.Background(), snap.Team.ID, member.ID, StopGraceful)
+	require.NoError(t, err)
+
+	// Verify member is stopped.
+	status, err := tr.Status(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+	ms, ok := status.Members[member.ID]
+	require.True(t, ok)
+	assert.Equal(t, MemberStopped, ms.State)
+}
+
+func TestTeamRunner_StopMember_Cancel(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-stopmc", LeaderSessionID: "lead-stopmc", Name: "stop-cancel-test",
+	})
+	require.NoError(t, err)
+
+	mockRunner := &recordingTurnRunner{
+		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
+	}
+	factory := &stubAgentFactory{runner: mockRunner}
+	tr := NewTeamRunner(svc, factory)
+
+	member, err := tr.SpawnMember(context.Background(), snap.Team.ID, "m1", "coder", "{}", agent.AgentSpec{})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	err = tr.StopMember(context.Background(), snap.Team.ID, member.ID, StopCancel)
+	require.NoError(t, err)
+
+	status, err := tr.Status(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+	ms := status.Members[member.ID]
+	assert.Equal(t, MemberStopped, ms.State)
+}
+
+func TestTeamRunner_StartTeam_LoadsExistingMembers(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-start", LeaderSessionID: "lead-start", Name: "start-team-test",
+	})
+	require.NoError(t, err)
+
+	// Pre-create members in DB (simulates existing team members from a prior session).
+	m1, err := svc.SpawnMember(context.Background(), SpawnMemberRequest{
+		TeamID: snap.Team.ID, Name: "m1", Role: "coder", AgentProfile: "{}",
+	})
+	require.NoError(t, err)
+	m2, err := svc.SpawnMember(context.Background(), SpawnMemberRequest{
+		TeamID: snap.Team.ID, Name: "m2", Role: "reviewer", AgentProfile: "{}",
+	})
+	require.NoError(t, err)
+
+	mockRunner := &recordingTurnRunner{
+		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
+	}
+	factory := &stubAgentFactory{runner: mockRunner}
+	tr := NewTeamRunner(svc, factory)
+
+	err = tr.StartTeam(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+
+	time.Sleep(200 * time.Millisecond)
+
+	status, err := tr.Status(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+	assert.Len(t, status.Members, 2)
+	assert.Contains(t, status.Members, m1.ID)
+	assert.Contains(t, status.Members, m2.ID)
+}
+
+func TestTeamRunner_StopTeam_AllMembersStopped(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-stopteam", LeaderSessionID: "lead-stopteam", Name: "stopteam-test",
+	})
+	require.NoError(t, err)
+
+	mockRunner := &recordingTurnRunner{
+		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
+	}
+	factory := &stubAgentFactory{runner: mockRunner}
+	tr := NewTeamRunner(svc, factory)
+
+	_, err = tr.SpawnMember(context.Background(), snap.Team.ID, "m1", "coder", "{}", agent.AgentSpec{})
+	require.NoError(t, err)
+	_, err = tr.SpawnMember(context.Background(), snap.Team.ID, "m2", "reviewer", "{}", agent.AgentSpec{})
+	require.NoError(t, err)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Stop the whole team.
+	err = tr.StopTeam(context.Background(), snap.Team.ID, StopCancel)
+	require.NoError(t, err)
+
+	status, err := tr.Status(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+	for id, ms := range status.Members {
+		assert.True(t, ms.State == MemberStopped || ms.State == MemberFailed,
+			"member %s should be terminal, got %s", id, ms.State)
+	}
 }
