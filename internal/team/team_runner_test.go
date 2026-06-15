@@ -373,3 +373,46 @@ func TestTeamRunner_LateRunDoesNotOverwriteCanceledState(t *testing.T) {
 	ms := status.Members[member.ID]
 	assert.Equal(t, MemberStopped, ms.State, "late run should not overwrite stopped state")
 }
+
+// --- Task 6: Edge cases ---
+
+func TestTeamRunner_StopMember_NotFound(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	tr := NewTeamRunner(svc, &stubAgentFactory{})
+	err := tr.StopMember(context.Background(), "no-such-team", "no-such-member", StopCancel)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestTeamRunner_CancelMemberTurn_NotFound(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	tr := NewTeamRunner(svc, &stubAgentFactory{})
+	err := tr.CancelMemberTurn(context.Background(), CancelMemberTurnRequest{
+		TeamID: "x", MemberID: "y",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestTeamRunner_StartTeam_NoMembers(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	snap, err := svc.CreateTeam(context.Background(), CreateTeamRequest{
+		WorkspaceID: "ws-empty", LeaderSessionID: "lead-empty", Name: "empty-team",
+	})
+	require.NoError(t, err)
+	tr := NewTeamRunner(svc, &stubAgentFactory{})
+	err = tr.StartTeam(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+	status, err := tr.Status(context.Background(), snap.Team.ID)
+	require.NoError(t, err)
+	assert.Empty(t, status.Members)
+}
+
+func TestTeamRunner_Status_EmptyTeam(t *testing.T) {
+	svc, _ := newServiceFixture(t)
+	tr := NewTeamRunner(svc, &stubAgentFactory{})
+	status, err := tr.Status(context.Background(), "no-such-team")
+	require.NoError(t, err)
+	assert.Empty(t, status.Members)
+	assert.Equal(t, 0, status.ActiveRuns)
+}
