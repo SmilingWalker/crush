@@ -16,7 +16,7 @@ import (
 // team_send_message tools into the member's TurnRunner without breaking the
 // TurnRunner interface or any existing mock implementations.
 type ToolSettableRunner interface {
-	SetTools(tools []fantasy.AgentTool)
+	AppendTools(tools []fantasy.AgentTool)
 }
 
 // TurnStatus 表示一轮 agent turn 的终态

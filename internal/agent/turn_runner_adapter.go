@@ -48,11 +48,12 @@ func (a *TurnRunnerAdapter) IsSessionBusy(sessionID string) bool {
 	return a.sa.IsSessionBusy(sessionID)
 }
 
-// SetTools delegates to the wrapped SessionAgent. Implements the optional
-// ToolSettableRunner interface (M4-06) so MemberRunner can inject team tools
-// into the runner before turns begin.
-func (a *TurnRunnerAdapter) SetTools(tools []fantasy.AgentTool) {
-	a.sa.SetTools(tools)
+// AppendTools appends team tools to the wrapped SessionAgent's tool list
+// without replacing existing tools (bash/read/write/grep etc.). Implements the
+// optional ToolSettableRunner interface (M4-06) so MemberRunner can inject
+// team tools into the runner before turns begin.
+func (a *TurnRunnerAdapter) AppendTools(tools []fantasy.AgentTool) {
+	a.sa.AppendTools(tools)
 }
 
 // SessionAgentFactory is a minimal AgentFactory that wraps a SessionAgent

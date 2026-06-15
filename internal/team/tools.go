@@ -130,6 +130,20 @@ func NewTeamReportStatusTool(memberID, teamID string, svc Service) fantasy.Agent
 				return newTextError(fmt.Sprintf("task not found on retry: %s", err.Error())), nil
 			}
 
+			// Re-validate ownership after re-read (TOCTOU guard, Finding 1).
+			if task.AssigneeMemberID != nil && *task.AssigneeMemberID != memberID {
+				return newTextError(fmt.Sprintf(
+					"task %s was reassigned to %s during retry, no longer yours (%s)",
+					task.ID, *task.AssigneeMemberID, memberID,
+				)), nil
+			}
+
+			// Re-derive assignee from fresh read (Finding 2).
+			assignee = task.AssigneeMemberID
+			if assignee == nil && newStatus != TaskQueued {
+				assignee = &memberID
+			}
+
 			_, err = svc.UpdateTask(ctx, UpdateTaskRequest{
 				ID:               task.ID,
 				TeamID:           teamID,

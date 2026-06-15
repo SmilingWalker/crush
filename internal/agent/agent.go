@@ -87,6 +87,7 @@ type SessionAgent interface {
 	Run(context.Context, SessionAgentCall) (*fantasy.AgentResult, error)
 	SetModels(large Model, small Model)
 	SetTools(tools []fantasy.AgentTool)
+	AppendTools(tools []fantasy.AgentTool)
 	SetSystemPrompt(systemPrompt string)
 	Cancel(sessionID string)
 	CancelAll()
@@ -1279,6 +1280,9 @@ func (a *sessionAgent) SetModels(large Model, small Model) {
 
 func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 	a.tools.SetSlice(tools)
+}
+func (a *sessionAgent) AppendTools(tools []fantasy.AgentTool) {
+	a.tools.Append(tools...)
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
