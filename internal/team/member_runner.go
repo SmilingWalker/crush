@@ -154,6 +154,7 @@ func (m *MemberRunner) Stop() {
 	if m.cancel != nil {
 		m.cancel()
 	}
+	m.transitionLocked(MemberShuttingDown)
 	m.transitionLocked(MemberStopped)
 }
 
