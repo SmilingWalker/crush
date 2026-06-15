@@ -465,28 +465,7 @@ func (p *Panel) moveSelection(delta int) {
 
 // --- helpers ---
 
-func statusIcon(status string) string {
-	switch status {
-	case "running", "in_progress":
-		return "●" // ●
-	case "completed":
-		return "✓" // ✓
-	case "failed":
-		return "✗" // ✗
-	case "paused":
-		return "⏸" // ⏸
-	case "blocked", "waiting_permission":
-		return "⏳" // ⏳
-	case "queued", "assigned", "created", "starting":
-		return "○" // ○
-	case "stopped", "canceled":
-		return "■" // ■
-	case "idle":
-		return "◇" // ◇
-	default:
-		return " "
-	}
-}
+func statusIcon(status string) string { return StatusIcon(status) }
 
 func idPrefix(s string, n int) string {
 	if len(s) <= n {
