@@ -11,6 +11,8 @@ package agent
 import (
 	"context"
 	"fmt"
+
+	"charm.land/fantasy"
 )
 
 // TurnRunnerAdapter wraps a SessionAgent and implements TurnRunner.
@@ -44,6 +46,13 @@ func (a *TurnRunnerAdapter) Cancel(sessionID string) {
 // IsSessionBusy delegates to the wrapped SessionAgent.
 func (a *TurnRunnerAdapter) IsSessionBusy(sessionID string) bool {
 	return a.sa.IsSessionBusy(sessionID)
+}
+
+// SetTools delegates to the wrapped SessionAgent. Implements the optional
+// ToolSettableRunner interface (M4-06) so MemberRunner can inject team tools
+// into the runner before turns begin.
+func (a *TurnRunnerAdapter) SetTools(tools []fantasy.AgentTool) {
+	a.sa.SetTools(tools)
 }
 
 // SessionAgentFactory is a minimal AgentFactory that wraps a SessionAgent

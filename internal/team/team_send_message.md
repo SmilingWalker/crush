@@ -1,0 +1,1 @@
+Send a message to another team member, all members (broadcast), or members with a specific role. Use this to communicate progress, ask for help, share results, or notify others of task status changes. You can send message or task_status kinds. You cannot send shutdown commands — only the team leader can shut down members.

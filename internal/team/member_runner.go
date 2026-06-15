@@ -16,6 +16,8 @@ import (
 	"log/slog"
 	"sync"
 
+	"charm.land/fantasy"
+
 	"github.com/charmbracelet/crush/internal/actor"
 	"github.com/charmbracelet/crush/internal/agent"
 )
@@ -199,6 +201,15 @@ func (m *MemberRunner) Start(ctx context.Context) error {
 		return fmt.Errorf("build runner: %w", err)
 	}
 	m.runner = runner
+
+	// M4-06: inject member tools (team_report_status + team_send_message)
+	// into the TurnRunner if it supports the optional ToolSettableRunner interface.
+	if ts, ok := runner.(agent.ToolSettableRunner); ok {
+		ts.SetTools([]fantasy.AgentTool{
+			NewTeamReportStatusTool(m.ID, m.TeamID, m.svc),
+			NewTeamSendMessageTool(m.ID, m.TeamID, m.Role, m.svc),
+		})
+	}
 
 	// Enter idle and launch loop.
 	m.transitionLocked(MemberIdle)

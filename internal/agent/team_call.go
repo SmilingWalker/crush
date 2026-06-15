@@ -7,6 +7,18 @@ import (
 	"github.com/charmbracelet/crush/internal/actor"
 )
 
+// ToolSettableRunner is an OPTIONAL interface that TurnRunner implementations
+// may support. It lets callers inject extra tools into the runner before turns
+// begin. TurnRunnerAdapter implements it; mock TurnRunners in tests do not
+// (and don't need to).
+//
+// Introduced in M4-06 for MemberRunner to inject team_report_status and
+// team_send_message tools into the member's TurnRunner without breaking the
+// TurnRunner interface or any existing mock implementations.
+type ToolSettableRunner interface {
+	SetTools(tools []fantasy.AgentTool)
+}
+
 // TurnStatus 表示一轮 agent turn 的终态
 type TurnStatus string
 
