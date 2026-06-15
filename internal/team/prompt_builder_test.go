@@ -248,6 +248,164 @@ type stubMailboxReader struct {
 	err  error
 }
 
+// --- T3: Build + overflow + truncation tests ---
+
+func TestPromptBuilder_Build_NoOverflow(t *testing.T) {
+	// All sections fit comfortably within a large MaxBytes — no truncation.
+	task := &TeamTask{ID: "t1", Title: "Fix bug", Description: "A simple bug fix."}
+	pb := NewPromptBuilder("m1", "t1", "coder", task, &stubMailboxReader{})
+	pb.SetMaxBytes(100000)
+	result, err := pb.Build(context.Background())
+	require.NoError(t, err)
+
+	// All 9 section headers present.
+	assert.Contains(t, result, "[system_policy]")
+	assert.Contains(t, result, "[member_identity]")
+	assert.Contains(t, result, "[current_task]")
+	assert.Contains(t, result, "[direct_messages]")
+	assert.Contains(t, result, "[dependency_results]")
+	assert.Contains(t, result, "[leader_instruction]")
+	assert.Contains(t, result, "[broadcast_messages]")
+	assert.Contains(t, result, "[session_summary]")
+	assert.Contains(t, result, "[reporting_rules]")
+	// No truncation markers.
+	assert.NotContains(t, result, "[truncated: context window overflow]")
+}
+
+func TestPromptBuilder_Build_MaxBytesZero(t *testing.T) {
+	// MaxBytes=0 means no limit — full output always returned.
+	task := &TeamTask{ID: "t1", Title: "Fix bug", Description: "Desc."}
+	pb := NewPromptBuilder("m1", "t1", "coder", task, &stubMailboxReader{})
+	// MaxBytes defaults to 0.
+	result, err := pb.Build(context.Background())
+	require.NoError(t, err)
+	assert.NotEmpty(t, result)
+	assert.NotContains(t, result, "[truncated: context window overflow]")
+}
+
+func TestPromptBuilder_Build_ErrContextOverflow(t *testing.T) {
+	// Acceptance #5: when task alone (priority 1) exceeds MaxBytes, Build
+	// returns ErrContextOverflow.
+	task := &TeamTask{ID: "t1", Title: "Fix bug", Description: "A simple bug fix."}
+	pb := NewPromptBuilder("m1", "t1", "coder", task, &stubMailboxReader{})
+	// Set MaxBytes so small that even priority-1 sections overflow.
+	pb.SetMaxBytes(50)
+	_, err := pb.Build(context.Background())
+	assert.ErrorIs(t, err, ErrContextOverflow)
+}
+
+func TestPromptBuilder_Build_TaskNotTruncated(t *testing.T) {
+	// Acceptance #2: task full text is never truncated even when overflow
+	// forces truncation of lower-priority sections.
+	task := &TeamTask{
+		ID:          "t1",
+		Title:       "Fix login bug in auth module",
+		Description: "The login form returns HTTP 500 when submitting with an empty email field. This affects all users on the production cluster.",
+	}
+	pb := NewPromptBuilder("m1", "t1", "coder", task, &stubMailboxReader{})
+	// Set MaxBytes just large enough for priority-1 sections but too small
+	// for the full prompt. Approximate: priority-1 sections total ~2KB.
+	// We want truncation to kick in but NOT touch the task.
+	result1, err1 := pb.Build(context.Background()) // no limit
+	require.NoError(t, err1)
+
+	// Use a MaxBytes slightly larger than priority-1 only.
+	p1Bytes := priorityOneBytes(t, result1)
+	pb.SetMaxBytes(p1Bytes + 100) // room for p1 + tiny overhead
+	result, err := pb.Build(context.Background())
+	require.NoError(t, err)
+
+	// Task full text is intact.
+	assert.Contains(t, result, task.Title)
+	assert.Contains(t, result, task.Description)
+	// Lower-priority sections are truncated.
+	assert.Contains(t, result, "[truncated: context window overflow]")
+}
+
+func TestPromptBuilder_Build_OverflowTruncatesLowPriority(t *testing.T) {
+	// Acceptance #4: overflow truncates low-priority sections first.
+	// Session summary (priority 5) and broadcast (priority 4) should be
+	// truncated before direct messages (priority 2).
+	mb := &stubMailboxReader{
+		msgs: []MailboxMessage{
+			{ID: "msg-1", FromMemberID: "m2", Kind: KindMessage, Summary: "Hello", Payload: "World"},
+		},
+	}
+	task := &TeamTask{ID: "t1", Title: "Task", Description: "Desc."}
+	pb := NewPromptBuilder("m1", "t1", "coder", task, mb)
+
+	// First build without limit to measure full size.
+	full, err := pb.Build(context.Background())
+	require.NoError(t, err)
+
+	p1Bytes := priorityOneBytes(t, full)
+
+	// Set MaxBytes between priority-1-only and full size, forcing truncation
+	// of low-priority sections while keeping priority-1 intact.
+	pb.SetMaxBytes(p1Bytes + (len(full)-p1Bytes)/2)
+	result, err := pb.Build(context.Background())
+	require.NoError(t, err)
+
+	// All priority-1 section headers are present (not truncated).
+	assert.Contains(t, result, "[system_policy]")
+	assert.Contains(t, result, "[member_identity]")
+	assert.Contains(t, result, "[current_task]")
+	assert.Contains(t, result, "[reporting_rules]")
+
+	// Low-priority sections (5, 4, maybe 3) should be truncated.
+	assert.Contains(t, result, "[truncated: context window overflow]")
+
+	// Task text is intact — not truncated.
+	assert.Contains(t, result, task.Title)
+	assert.Contains(t, result, task.Description)
+}
+
+func TestPromptBuilder_truncate_ErrContextOverflow(t *testing.T) {
+	// Direct unit test for truncate: priority-1 alone > MaxBytes.
+	pb := NewPromptBuilder("m1", "t1", "coder", nil, nil)
+	pb.SetMaxBytes(10) // impossibly small
+	sections := []promptSection{
+		{"s1", "some content that surely exceeds 10 bytes", PriorityCritical},
+	}
+	_, err := pb.truncate(sections)
+	assert.ErrorIs(t, err, ErrContextOverflow)
+}
+
+// priorityOneBytes returns the total byte count if only priority-1 sections
+// were concatenated (system_policy, member_identity, current_task,
+// reporting_rules), using the known priority-1 content from a full build.
+func priorityOneBytes(t *testing.T, result string) int {
+	t.Helper()
+	// Priority-1 sections: [system_policy], [member_identity], [current_task],
+	// and [reporting_rules] (at end). Approximate by summing the sections'
+	// contributions: everything before [direct_messages] plus the reporting_rules
+	// section at the end.
+	p1Head := len(result)
+	if idx := indexOfNoFatal(result, "[direct_messages]"); idx >= 0 {
+		p1Head = idx
+	}
+	// reporting_rules is the last section; extract it.
+	rulesStart := indexOfNoFatal(result, "[reporting_rules]")
+	if rulesStart < 0 {
+		return p1Head
+	}
+	// reporting_rules content goes to the end of the result.
+	rulesLen := len(result) - rulesStart
+	// Separator between the last of the first 3 p1 sections and reporting_rules:
+	// 2 bytes ("\n\n").
+	return p1Head + 2 + rulesLen
+}
+
+// indexOfNoFatal returns the byte position of substr in s, or -1 if not found.
+func indexOfNoFatal(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
 func (s *stubMailboxReader) GetUnreadMessages(_ context.Context, _ string, _ int) ([]MailboxMessage, error) {
 	if s.err != nil {
 		return nil, s.err
