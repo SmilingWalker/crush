@@ -124,15 +124,14 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		agentNotifications: pubsub.NewBroker[notify.Notification](),
 	}
 
-	// M3-07 Seam 1: construct the team.Service from the shared *sql.DB so the
-	// server can reach TeamWorkspace via App.Team(). The 6 stores each wrap a
-	// *db.Queries (q above); the Service orchestrates them. Feature gate
-	// defaults to DISABLED — M3-08 wires config.Options.IsAgentTeamEnabled via
-	// team.WithEnabledGate.
+	// Construct the team.Service from the shared *sql.DB. The 6 stores each
+	// wrap a *db.Queries (q above); the Service orchestrates them. Feature
+	// gate controlled by config.Options.IsAgentTeamEnabled (M3-08).
 	app.team = team.NewService(
 		conn,
 		team.NewTeamStore(q), team.NewMemberStore(q), team.NewTaskStore(q),
 		team.NewRunStore(q), team.NewEventStore(q), team.NewAuditStore(q),
+		team.WithEnabledGate(func() bool { return cfg.Options.IsAgentTeamEnabled() }),
 	)
 
 	app.setupEvents()

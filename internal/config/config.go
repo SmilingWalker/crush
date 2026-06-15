@@ -269,6 +269,19 @@ func (Attribution) JSONSchemaExtend(schema *jsonschema.Schema) {
 	}
 }
 
+// ExperimentalOptions holds experimental feature toggles. These are opt-in flags
+// that may change or be removed before stabilisation (M3-08).
+type ExperimentalOptions struct {
+	// AgentTeamPreview enables preview-only UX surfaces (UI panels, etc.) that
+	// render team state without writing. The feature gate for data writes is
+	// controlled by the separate AgentTeam flag.
+	AgentTeamPreview bool `json:"agent_team_preview,omitempty"`
+	// AgentTeam enables the agent-team mode backend: team/member/task/run/event
+	// persistence, API routes, and the debug snapshot UI (M3-09). When false the
+	// team-data-domain returns ErrFeatureDisabled from every write path.
+	AgentTeam bool `json:"agent_team,omitempty"`
+}
+
 type Options struct {
 	ContextPaths         []string    `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=CRUSH.md"`
 	SkillsPaths          []string    `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/crush/skills,example=./skills"`
@@ -292,6 +305,14 @@ type Options struct {
 	DisableNotifications      bool         `json:"disable_notifications,omitempty" jsonschema:"description=Deprecated: Use notification_style instead. Disable desktop notifications,default=false"`
 	NotificationStyle         string       `json:"notification_style,omitempty" jsonschema:"description=Notification style to use. Options: auto (default), native, osc, bell, disabled. Auto selects based on environment: native for local sessions, osc for SSH (with automatic OSC 99/777 detection).,enum=auto,enum=native,enum=osc,enum=bell,enum=disabled,default=auto"`
 	DisabledSkills            []string     `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=crush-config"`
+	Experimental              *ExperimentalOptions `json:"experimental,omitempty" jsonschema:"description=Experimental feature toggles"`
+}
+
+// IsAgentTeamEnabled reports whether the agent-team backend feature is enabled.
+// Returns false when Options is nil, Experimental is nil, or AgentTeam is false,
+// so old config files without the experimental block are safe (M3-08 acceptance #3).
+func (o *Options) IsAgentTeamEnabled() bool {
+	return o != nil && o.Experimental != nil && o.Experimental.AgentTeam
 }
 
 type MCPs map[string]MCPConfig
