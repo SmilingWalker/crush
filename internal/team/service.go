@@ -141,6 +141,7 @@ type Service interface {
 	HeartbeatRun(ctx context.Context, runID string) error
 	FinishRun(ctx context.Context, req FinishRunRequest) error
 	MarkRunTerminal(ctx context.Context, req MarkRunTerminalRequest) error
+	FindStaleRuns(ctx context.Context, cutoff time.Time) ([]TeamRun, error)
 
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
 	DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
@@ -674,6 +675,28 @@ func (s *teamService) MarkRunTerminal(ctx context.Context, req MarkRunTerminalRe
 		return err
 	}
 	return tx.Commit()
+}
+
+// FindStaleRuns returns runs whose heartbeat_at is before cutoff AND status is
+// in ('running','waiting_permission','queued'). Surfaced from RunStore to the
+// Service interface for M4-03's RecoverStaleRuns (Seam 9).
+func (s *teamService) FindStaleRuns(ctx context.Context, cutoff time.Time) ([]TeamRun, error) {
+	if err := s.enabledGuard(); err != nil {
+		return nil, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	runs, err := s.runs.FindStaleRuns(ctx, tx, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return runs, nil
 }
 
 // --- event + snapshot + debug methods ---
