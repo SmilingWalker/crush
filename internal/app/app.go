@@ -77,6 +77,19 @@ type App struct {
 	// gate defaults to disabled until M3-08 wires IsAgentTeamEnabled.
 	team team.Service
 
+	// teamFactory is the M4-14 production AgentFactory backed by the
+	// M1 coordinator. Wired in New() alongside team.Service.
+	teamFactory agent.AgentFactory
+
+	// teamRunner is the M4-02 TeamRunner — the runtime orchestrator that
+	// manages MemberRunner instances. Wired in New() when the agent-team
+	// feature gate is enabled.
+	teamRunner team.TeamRunner
+
+	// teamScheduler is the M4-03 Scheduler — task claiming, heartbeat, and
+	// stale-run recovery. Wired in New() alongside TeamRunner.
+	teamScheduler *team.Scheduler
+
 	serviceEventsWG *sync.WaitGroup
 	eventsCtx       context.Context
 	events          *pubsub.Broker[tea.Msg]
@@ -159,6 +172,13 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	if err := app.InitCoderAgent(ctx); err != nil {
 		return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
 	}
+
+	// M4-14: wire the production AgentFactory backed by the M1 coordinator.
+	app.teamFactory = agent.NewCoordinatorAgentFactory(app.AgentCoordinator)
+
+	// M4-02 / M4-03: wire the TeamRunner and Scheduler over the team.Service.
+	app.teamRunner = team.NewTeamRunner(app.team, app.teamFactory)
+	app.teamScheduler = team.NewScheduler(app.team, team.DefaultSchedulerConfig())
 
 	// Set up callback for LSP state updates.
 	app.LSPManager.SetCallback(func(name string, client *lsp.Client) {
