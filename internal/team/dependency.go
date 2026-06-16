@@ -27,6 +27,13 @@ var ErrSelfDependency = errors.New("task cannot depend on itself")
 // Before inserting, it runs DFS cycle detection: if dependsOnTaskID already
 // transitively depends on taskID, adding this edge would create a cycle.
 // Self-dependency (taskID == dependsOnTaskID) is also rejected.
+func (s *teamService) ensureDeps() error {
+	if s.deps == nil {
+		return errors.New("dependency store not configured")
+	}
+	return nil
+}
+
 func (s *teamService) AddDependency(ctx context.Context, taskID, dependsOnTaskID, teamID string) error {
 	if err := s.enabledGuard(); err != nil {
 		return err

@@ -150,6 +150,10 @@ type Service interface {
 	SendMessage(ctx context.Context, req SendMessageRequest) ([]string, error)
 	GetUnreadMessages(ctx context.Context, memberID string, limit int) ([]MailboxMessage, error)
 
+		AddDependency(ctx context.Context, taskID, dependsOnTaskID, teamID string) error
+		RemoveDependency(ctx context.Context, taskID, dependsOnTaskID string) error
+		OnTaskCompleted(ctx context.Context, teamID, completedTaskID string) ([]string, error)
+		GetTaskWithDeps(ctx context.Context, teamID, taskID string) (TeamTask, error)
 		RecoverMemberSession(ctx context.Context, teamID, memberID string) (string, error)
 
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
