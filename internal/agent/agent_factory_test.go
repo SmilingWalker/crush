@@ -32,7 +32,8 @@ func (c *stubBuildCoordinator) QueuedPromptsList(string) []string   { return nil
 func (c *stubBuildCoordinator) ClearQueue(string)                   {}
 func (c *stubBuildCoordinator) Summarize(context.Context, string) error { return nil }
 func (c *stubBuildCoordinator) Model() Model                        { return Model{} }
-func (c *stubBuildCoordinator) UpdateModels(context.Context) error  { return nil }
+func (c *stubBuildCoordinator) UpdateModels(context.Context) error     { return nil }
+func (c *stubBuildCoordinator) AppendTools(tools []fantasy.AgentTool)   {}
 func (c *stubBuildCoordinator) BuildSessionAgent(ctx context.Context, spec AgentSpec) (SessionAgent, error) {
 	c.lastSpec = spec
 	if c.buildSessionAgentFn != nil {

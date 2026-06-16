@@ -180,6 +180,18 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	app.teamRunner = team.NewTeamRunner(app.team, app.teamFactory)
 	app.teamScheduler = team.NewScheduler(app.team, team.DefaultSchedulerConfig())
 
+	// M4.5: inject leader team tools into the coder agent when the feature
+	// gate is enabled. The model can then create teams and spawn members
+	// through normal chat conversation.
+	if cfg.Options.IsAgentTeamEnabled() {
+		app.AgentCoordinator.AppendTools([]fantasy.AgentTool{
+			team.NewTeamCreateTool(app.team, app.teamRunner),
+			team.NewTeamSpawnMemberTool(app.team, app.teamRunner),
+			team.NewTeamListTool(app.team),
+			team.NewTeamStatusTool(app.teamRunner),
+		})
+	}
+
 	// Set up callback for LSP state updates.
 	app.LSPManager.SetCallback(func(name string, client *lsp.Client) {
 		if client == nil {
