@@ -87,6 +87,11 @@ type Coordinator interface {
 	Model() Model
 	UpdateModels(ctx context.Context) error
 
+	// AppendTools adds tools to the main agent without replacing existing tools.
+	// Used by the app layer to inject team leader tools when the agent-team
+	// feature gate is enabled (M4.5).
+	AppendTools(tools []fantasy.AgentTool)
+
 	// BuildSessionAgent creates a SessionAgent configured from the given AgentSpec.
 	// M4-14: production AgentFactory seam — maps AgentSpec fields to model selection,
 	// permission mode, tool policy, and system prompt.
@@ -1009,6 +1014,10 @@ func (c *coordinator) IsSessionBusy(sessionID string) bool {
 
 func (c *coordinator) Model() Model {
 	return c.currentAgent.Model()
+}
+
+func (c *coordinator) AppendTools(tools []fantasy.AgentTool) {
+	c.currentAgent.AppendTools(tools)
 }
 
 // BuildSessionAgent creates a SessionAgent configured from the given AgentSpec.
