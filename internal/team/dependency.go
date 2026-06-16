@@ -38,6 +38,9 @@ func (s *teamService) AddDependency(ctx context.Context, taskID, dependsOnTaskID
 	if err := s.enabledGuard(); err != nil {
 		return err
 	}
+	if s.deps == nil {
+		return errors.New("dependency store not configured")
+	}
 	if taskID == dependsOnTaskID {
 		return ErrSelfDependency
 	}
@@ -123,6 +126,9 @@ func (s *teamService) AddDependency(ctx context.Context, taskID, dependsOnTaskID
 // creates a path dependsOnTaskID→...→taskID, which together with the proposed
 // taskID→dependsOnTaskID edge forms a cycle.
 func (s *teamService) checkCycle(ctx context.Context, teamID, taskID, dependsOnTaskID string) (bool, error) {
+	if s.deps == nil {
+		return false, errors.New("dependency store not configured")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("begin cycle check tx: %w", err)
@@ -178,6 +184,9 @@ func (s *teamService) RemoveDependency(ctx context.Context, taskID, dependsOnTas
 	if err := s.enabledGuard(); err != nil {
 		return err
 	}
+	if s.deps == nil {
+		return errors.New("dependency store not configured")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -203,6 +212,9 @@ func (s *teamService) RemoveDependency(ctx context.Context, taskID, dependsOnTas
 func (s *teamService) OnTaskCompleted(ctx context.Context, teamID, completedTaskID string) ([]string, error) {
 	if err := s.enabledGuard(); err != nil {
 		return nil, err
+	}
+	if s.deps == nil {
+		return nil, errors.New("dependency store not configured")
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -302,6 +314,9 @@ func (s *teamService) OnTaskCompleted(ctx context.Context, teamID, completedTask
 func (s *teamService) GetTaskWithDeps(ctx context.Context, teamID, taskID string) (TeamTask, error) {
 	if err := s.enabledGuard(); err != nil {
 		return TeamTask{}, err
+	}
+	if s.deps == nil {
+		return TeamTask{}, errors.New("dependency store not configured")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
