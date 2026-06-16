@@ -177,7 +177,13 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	app.teamFactory = agent.NewCoordinatorAgentFactory(app.AgentCoordinator)
 
 	// M4-02 / M4-03: wire the TeamRunner and Scheduler over the team.Service.
-	app.teamRunner = team.NewTeamRunner(app.team, app.teamFactory)
+	app.teamRunner = team.NewTeamRunnerWithSession(app.team, app.teamFactory, func(ctx context.Context) (string, error) {
+		sess, err := app.Sessions.Create(ctx, "Team Member Session")
+		if err != nil {
+			return "", err
+		}
+		return sess.ID, nil
+	})
 	app.teamScheduler = team.NewScheduler(app.team, team.DefaultSchedulerConfig())
 
 	// M4.5: inject leader team tools into the coder agent when the feature
@@ -189,7 +195,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			team.NewTeamSpawnMemberTool(app.team, app.teamRunner),
 			team.NewTeamListTool(app.team),
 			team.NewTeamStatusTool(app.teamRunner),
-			team.NewLeaderSendMessageTool(app.team),
+			team.NewLeaderSendMessageTool(app.team, app.teamRunner),
 		})
 	}
 
