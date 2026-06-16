@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/crush/internal/questions"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/team"
 )
 
 // LSPClientInfo holds information about an LSP client's state. This is
@@ -162,6 +163,10 @@ type Workspace interface {
 	// Events
 	Subscribe(program *tea.Program)
 	Shutdown()
+
+	// TeamRunner returns the TeamRunner instance for this workspace, or nil
+	// if team mode is not configured (e.g. client/server mode, test fixtures).
+	TeamRunner() team.TeamRunner
 }
 
 // MCPResourceContents holds the contents of an MCP resource.
