@@ -202,6 +202,10 @@ type TeamTask struct {
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`
+	// blocks/blockedBy are computed (not column-backed). Populated by
+	// GetTaskWithDeps via GetDependencies/GetDependents lookups.
+	Blocks    []string `json:"blocks,omitempty"`
+	BlockedBy []string `json:"blocked_by,omitempty"`
 }
 
 // TeamRun is the domain representation of a team_runs row. task_id is nullable
@@ -355,8 +359,17 @@ type MessageReceipt struct {
 	ReadAt      *time.Time `json:"read_at,omitempty"`
 }
 
+// TeamTaskDependency is the domain representation of a team_task_dependencies row.
+// It records that task_id depends on depends_on_task_id (i.e., task_id is blocked
+// until depends_on_task_id completes). Both fields reference team_tasks(id).
+type TeamTaskDependency struct {
+	TaskID          string    `json:"task_id"`
+	DependsOnTaskID string    `json:"depends_on_task_id"`
+	TeamID          string    `json:"team_id"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 // TeamSessionLink is the domain representation of a team_session_links row.
-// LinkType is "leader"|"member"|"delegate" (free string, not a Valid() enum).
 type TeamSessionLink struct {
 	ID        string    `json:"id"`
 	TeamID    string    `json:"team_id"`

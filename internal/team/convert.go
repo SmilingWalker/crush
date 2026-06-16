@@ -228,6 +228,15 @@ func toMessageReceipt(r db.TeamMessageReceipt) MessageReceipt {
 	}
 }
 
+func toTeamTaskDependency(r db.TeamTaskDependency) TeamTaskDependency {
+	return TeamTaskDependency{
+		TaskID:          r.TaskID,
+		DependsOnTaskID: r.DependsOnTaskID,
+		TeamID:          r.TeamID,
+		CreatedAt:       time.UnixMilli(r.CreatedAt),
+	}
+}
+
 func toSessionLink(r db.TeamSessionLink) TeamSessionLink {
 	return TeamSessionLink{
 		ID:        r.ID,
