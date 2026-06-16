@@ -178,6 +178,7 @@ func TestSendMessage_Direct(t *testing.T) {
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
 		NewSessionLinkStore(q),
+		nil, // deps
 		WithEnabledGate(func() bool { return true }),
 	)
 	ctx := context.Background()
@@ -206,6 +207,7 @@ func TestSendMessage_Broadcast(t *testing.T) {
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
 		NewSessionLinkStore(q),
+		nil, // deps
 		WithEnabledGate(func() bool { return true }),
 	)
 	ctx := context.Background()
@@ -244,6 +246,7 @@ func TestSendMessage_Role(t *testing.T) {
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
 		NewSessionLinkStore(q),
+		nil, // deps
 		WithEnabledGate(func() bool { return true }),
 	)
 	ctx := context.Background()
@@ -277,6 +280,7 @@ func TestSendMessage_GateOff(t *testing.T) {
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
 		NewSessionLinkStore(q),
+		nil, // deps
 		// NO WithEnabledGate
 	)
 	ctx := context.Background()

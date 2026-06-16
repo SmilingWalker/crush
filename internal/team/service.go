@@ -203,6 +203,7 @@ func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStor
 		audits:  audits,
 		mailbox: mailbox,
 		links:   links,
+		deps:    deps,
 		enabled: func() bool { return false }, // safe default: disabled until wired
 	}
 	for _, opt := range opts {

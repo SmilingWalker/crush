@@ -234,6 +234,8 @@ func TestOnTaskCompleted_CascadeWake_Single(t *testing.T) {
 	// Complete B → should unblock A.
 	_, err := svc.UpdateTask(ctx, UpdateTaskRequest{ID: taskB.ID, TeamID: snap.Team.ID, Status: TaskCompleted})
 	require.NoError(t, err)
+	_, err = svc.OnTaskCompleted(ctx, snap.Team.ID, taskB.ID)
+	require.NoError(t, err)
 
 	// A should now be queued.
 	got, err := svc.GetTask(ctx, snap.Team.ID, taskA.ID)
@@ -260,6 +262,8 @@ func TestOnTaskCompleted_CascadeWake_Chain(t *testing.T) {
 	// now queued (not completed), so A stays blocked.
 	_, err := svc.UpdateTask(ctx, UpdateTaskRequest{ID: taskC.ID, TeamID: snap.Team.ID, Status: TaskCompleted})
 	require.NoError(t, err)
+	_, err = svc.OnTaskCompleted(ctx, snap.Team.ID, taskC.ID)
+	require.NoError(t, err)
 
 	// B should be queued (unblocked).
 	b, err := svc.GetTask(ctx, snap.Team.ID, taskB.ID)
@@ -273,6 +277,8 @@ func TestOnTaskCompleted_CascadeWake_Chain(t *testing.T) {
 
 	// Now complete B → should cascade to unblock A.
 	_, err = svc.UpdateTask(ctx, UpdateTaskRequest{ID: taskB.ID, TeamID: snap.Team.ID, Status: TaskCompleted})
+	require.NoError(t, err)
+	_, err = svc.OnTaskCompleted(ctx, snap.Team.ID, taskB.ID)
 	require.NoError(t, err)
 
 	a, err = svc.GetTask(ctx, snap.Team.ID, taskA.ID)
@@ -296,6 +302,8 @@ func TestOnTaskCompleted_MultipleDependencies(t *testing.T) {
 	// Complete B only → A stays blocked (C not done).
 	_, err := svc.UpdateTask(ctx, UpdateTaskRequest{ID: taskB.ID, TeamID: snap.Team.ID, Status: TaskCompleted})
 	require.NoError(t, err)
+	_, err = svc.OnTaskCompleted(ctx, snap.Team.ID, taskB.ID)
+	require.NoError(t, err)
 
 	a, err := svc.GetTask(ctx, snap.Team.ID, taskA.ID)
 	require.NoError(t, err)
@@ -303,6 +311,8 @@ func TestOnTaskCompleted_MultipleDependencies(t *testing.T) {
 
 	// Complete C → now A unblocks.
 	_, err = svc.UpdateTask(ctx, UpdateTaskRequest{ID: taskC.ID, TeamID: snap.Team.ID, Status: TaskCompleted})
+	require.NoError(t, err)
+	_, err = svc.OnTaskCompleted(ctx, snap.Team.ID, taskC.ID)
 	require.NoError(t, err)
 
 	a, err = svc.GetTask(ctx, snap.Team.ID, taskA.ID)
@@ -323,6 +333,8 @@ func TestOnTaskCompleted_DependencyFailed_Unblocks(t *testing.T) {
 
 	// Fail B → A should still unblock (failed deps satisfy the gate).
 	_, err := svc.UpdateTask(ctx, UpdateTaskRequest{ID: taskB.ID, TeamID: snap.Team.ID, Status: TaskFailed})
+	require.NoError(t, err)
+	_, err = svc.OnTaskCompleted(ctx, snap.Team.ID, taskB.ID)
 	require.NoError(t, err)
 
 	a, err := svc.GetTask(ctx, snap.Team.ID, taskA.ID)
@@ -379,7 +391,8 @@ func TestFeatureGate_BlocksDependencyOps(t *testing.T) {
 		sqlDB,
 		NewTeamStore(q), NewMemberStore(q), NewTaskStore(q),
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
-		NewMailboxStore(q), NewDependencyStore(q),
+		NewMailboxStore(q), nil, // links = nil for dep test
+		NewDependencyStore(q),
 		// NO WithEnabledGate → default disabled
 	)
 	ctx := context.Background()
@@ -412,7 +425,9 @@ func TestOnTaskCompleted_ExplicitCall(t *testing.T) {
 	// Actually complete B via UpdateTask, then OnTaskCompleted explicitly.
 	_, err = svc.UpdateTask(ctx, UpdateTaskRequest{ID: taskB.ID, TeamID: snap.Team.ID, Status: TaskCompleted})
 	require.NoError(t, err)
-	// UpdateTask already triggered OnTaskCompleted, so A should be queued.
+	_, err = svc.OnTaskCompleted(ctx, snap.Team.ID, taskB.ID)
+	require.NoError(t, err)
+	// UpdateTask + OnTaskCompleted, so A should be queued.
 	a, err := svc.GetTask(ctx, snap.Team.ID, taskA.ID)
 	require.NoError(t, err)
 	assert.Equal(t, TaskQueued, a.Status, "A unblocked by UpdateTask cascade")

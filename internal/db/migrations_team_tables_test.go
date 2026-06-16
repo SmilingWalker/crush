@@ -36,9 +36,10 @@ func openMemoryDB(t *testing.T) *sql.DB {
 // pattern is 'team%' (NOT 'team\_%') because the root table is named
 // 'teams' (team + 's', no underscore), which a 'team\_%' pattern would
 // wrongly exclude — leaving a count of 6 and a false-negative test.
-// 'team%' matches all 10 (teams + team_members + team_tasks + team_runs
+// 'team%' matches all 11 (teams + team_members + team_tasks + team_runs
 // + team_events + team_event_counters + team_audit_events
-// + team_mailbox_messages + team_message_receipts + team_session_links)
+// + team_mailbox_messages + team_message_receipts + team_session_links
+// + team_task_dependencies)
 // and nothing else in a fresh DB.
 const teamTablesExistQuery = `
 SELECT count(*) FROM sqlite_master
@@ -56,7 +57,7 @@ WHERE type = 'index' AND name LIKE 'idx\_team%' ESCAPE '\'
 
 // TestTeamTablesMigration_Up applies the M3-01 migration to a fresh
 // in-memory DB and asserts acceptance criteria 1, 2, and 4:
-//   1. 10 team tables and 10 team indexes are created
+//   1. 11 team tables and 10 team indexes are created
 //   2. the (team_id, seq) UNIQUE index rejects a duplicate insert
 //   4. column types/constraints match the design (probed via a
 //      representative insert per table, plus the CASCADE behavior)
@@ -69,12 +70,12 @@ func TestTeamTablesMigration_Up(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Acceptance 1a: exactly 10 team tables.
+	// Acceptance 1a: exactly 11 team tables.
 	var tableCount int
 	require.NoError(t,
 		db.QueryRowContext(ctx, teamTablesExistQuery).Scan(&tableCount),
 		"count team tables")
-	assert.Equal(t, 10, tableCount, "expected 10 team tables after up")
+	assert.Equal(t, 11, tableCount, "expected 11 team tables after up")
 
 	// Acceptance 1b: exactly 10 team indexes (all 10 start with idx_team).
 	var indexCount int
@@ -143,7 +144,7 @@ func TestTeamTablesMigration_DownResetsCleanly(t *testing.T) {
 	require.NoError(t,
 		db.QueryRowContext(ctx, teamTablesExistQuery).Scan(&tableCount),
 		"count team tables after re-up")
-	assert.Equal(t, 10, tableCount, "expected 10 team tables after re-up")
+	assert.Equal(t, 11, tableCount, "expected 11 team tables after re-up")
 }
 
 // itoa is a tiny local int->string to keep the test free of strconv

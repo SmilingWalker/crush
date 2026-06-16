@@ -47,6 +47,7 @@ func newTeamTestService(t *testing.T) (team.Service, *sql.DB) {
 		team.NewRunStore(q), team.NewEventStore(q), team.NewAuditStore(q),
 		team.NewMailboxStore(q),
 		team.NewSessionLinkStore(q),
+		nil, // deps
 		team.WithEnabledGate(func() bool { return true }),
 	)
 	return svc, sqlDB
