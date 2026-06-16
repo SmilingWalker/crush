@@ -137,18 +137,29 @@ func (t *teamRunner) StartTeam(ctx context.Context, teamID string) error {
 }
 
 // StopTeam shuts down all registered members for the given team using the
-// specified StopMode. Each member's Shutdown() handles the full 9-step sequence
-// including the wait loop, so the TeamRunner no longer polls externally.
+// specified StopMode. Each member shutdown runs concurrently — total time is
+// bounded by the slowest member (max 30s), not N×30s.
+// Each member's Shutdown() handles the full 9-step sequence internally, so
+// there is no cross-member coordination needed.
 func (t *teamRunner) StopTeam(ctx context.Context, teamID string, mode StopMode) error {
 	t.mu.RLock()
-	defer t.mu.RUnlock()
-
+	members := make([]*MemberRunner, 0, len(t.members))
 	for _, mr := range t.members {
-		if mr.TeamID != teamID {
-			continue
+		if mr.TeamID == teamID {
+			members = append(members, mr)
 		}
-		_ = mr.Shutdown(ctx, mode)
 	}
+	t.mu.RUnlock()
+
+	var wg sync.WaitGroup
+	for _, mr := range members {
+		wg.Add(1)
+		go func(m *MemberRunner) {
+			defer wg.Done()
+			_ = m.Shutdown(ctx, mode)
+		}(mr)
+	}
+	wg.Wait()
 	return nil
 }
 
