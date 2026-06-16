@@ -281,34 +281,31 @@ func (pb *PromptBuilder) directMessages(ctx context.Context) string {
 }
 
 // dependencyResults returns summaries of completed dependency task results.
-// Priority 3 — may be truncated. Placeholder until M4-11 (Task Dependencies).
+// Priority 3 — may be truncated. M4-11 (Task Dependencies) is implemented;
+// wiring GetTaskWithDeps into the PromptBuilder is deferred to a future milestone.
 func (pb *PromptBuilder) dependencyResults() string {
-	return "(no dependency results — dependency tracking not yet implemented)"
+	return "(dependency results available — not yet wired to prompt builder)"
 }
 
 // leaderInstruction returns the latest instruction from the team lead.
-// Priority 3 — may be truncated. Placeholder until hook point is defined.
+// Priority 3 — may be truncated. Deferred to M5 (leader instruction hook point).
 func (pb *PromptBuilder) leaderInstruction() string {
-	return "(no leader instruction)"
+	return "(no leader instruction — M5 deferred)"
 }
 
 // broadcastMessages returns formatted broadcast/role messages. Priority 4 —
 // may be truncated under overflow. Every message is prefixed with an UNTRUSTED
-// PEER INPUT marker. Placeholder until broadcast-specific delivery is added
-// (M4-07 shutdown sequence).
+// PEER INPUT marker. Broadcast messages are delivered via mailbox receipts and
+// are already captured by directMessages(); returning empty avoids duplication.
 func (pb *PromptBuilder) broadcastMessages(ctx context.Context) string {
-	// M4-05: broadcast messages share the same GetUnreadMessages as direct,
-	// since the mailbox does not yet distinguish delivery methods. Returning
-	// empty avoids duplicating direct messages in the prompt. M4-07 will add
-	// broadcast-specific message kinds (KindShutdownRequest etc.).
 	_ = ctx
-	return "(no broadcast messages)"
+	return "(broadcast messages included in direct_messages above)"
 }
 
 // sessionSummary returns the member's own session summary. Priority 5 — first
-// to truncate. Placeholder until session summary tracking is added.
+// to truncate. Deferred to M5 (session summary tracking hook point).
 func (pb *PromptBuilder) sessionSummary() string {
-	return "(no session summary)"
+	return "(no session summary — M5 deferred)"
 }
 
 // reportingRules returns the standard reporting rules for team members.

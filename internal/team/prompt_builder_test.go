@@ -129,7 +129,7 @@ func TestPromptBuilder_directMessages_Error(t *testing.T) {
 func TestPromptBuilder_dependencyResults(t *testing.T) {
 	pb := NewPromptBuilder("m1", "t1", "coder", nil, nil)
 	s := pb.dependencyResults()
-	assert.Contains(t, s, "no dependency results")
+	assert.Contains(t, s, "dependency results")
 }
 
 func TestPromptBuilder_leaderInstruction(t *testing.T) {
@@ -141,7 +141,7 @@ func TestPromptBuilder_leaderInstruction(t *testing.T) {
 func TestPromptBuilder_broadcastMessages(t *testing.T) {
 	pb := NewPromptBuilder("m1", "t1", "coder", nil, nil)
 	s := pb.broadcastMessages(context.Background())
-	assert.Contains(t, s, "no broadcast messages")
+	assert.Contains(t, s, "broadcast messages")
 }
 
 func TestPromptBuilder_sessionSummary(t *testing.T) {
