@@ -151,10 +151,6 @@ type Service interface {
 	GetUnreadMessages(ctx context.Context, memberID string, limit int) ([]MailboxMessage, error)
 
 		RecoverMemberSession(ctx context.Context, teamID, memberID string) (string, error)
-AddDependency(ctx context.Context, taskID, dependsOnTaskID, teamID string) error
-	RemoveDependency(ctx context.Context, taskID, dependsOnTaskID string) error
-	OnTaskCompleted(ctx context.Context, teamID, completedTaskID string) ([]string, error)
-	GetTaskWithDeps(ctx context.Context, teamID, taskID string) (TeamTask, error)
 
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
 	DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
@@ -203,7 +199,6 @@ func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStor
 		audits:  audits,
 		mailbox: mailbox,
 		links:   links,
-		deps:    deps,
 		enabled: func() bool { return false }, // safe default: disabled until wired
 	}
 	for _, opt := range opts {
