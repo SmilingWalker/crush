@@ -12,6 +12,7 @@ package team
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -125,7 +126,12 @@ func (t *teamRunner) StartTeam(ctx context.Context, teamID string) error {
 		spec := agent.AgentSpec{}
 		mr := NewMemberRunner(member.ID, teamID, spec, t.factory, t.svc)
 		t.members[member.ID] = mr
-		go mr.Start(ctx)
+		go func() {
+			if err := mr.Start(ctx); err != nil {
+				slog.Error("StartTeam: member Start failed",
+					"member_id", member.ID, "team_id", teamID, "error", err)
+			}
+		}()
 	}
 	return nil
 }
