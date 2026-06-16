@@ -177,6 +177,15 @@ type TeamMailboxMessage struct {
 	CreatedAt    int64  `json:"created_at"`
 }
 
+type TeamSessionLink struct {
+	ID        string `json:"id"`
+	TeamID    string `json:"team_id"`
+	MemberID  string `json:"member_id"`
+	SessionID string `json:"session_id"`
+	LinkType  string `json:"link_type"`
+	LinkedAt  int64  `json:"linked_at"`
+}
+
 type TeamMessageReceipt struct {
 	ID          string        `json:"id"`
 	MessageID   string        `json:"message_id"`

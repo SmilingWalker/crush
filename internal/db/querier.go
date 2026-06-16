@@ -76,6 +76,9 @@ type Querier interface {
 	InsertReceipt(ctx context.Context, arg InsertReceiptParams) error
 	MarkDelivered(ctx context.Context, arg MarkDeliveredParams) error
 	MarkRead(ctx context.Context, arg MarkReadParams) error
+	InsertSessionLink(ctx context.Context, arg InsertSessionLinkParams) (TeamSessionLink, error)
+	GetSessionLinkByMember(ctx context.Context, arg GetSessionLinkByMemberParams) (TeamSessionLink, error)
+	GetSessionLinksByTeam(ctx context.Context, arg GetSessionLinksByTeamParams) ([]TeamSessionLink, error)
 }
 
 var _ Querier = (*Queries)(nil)

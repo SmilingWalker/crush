@@ -354,3 +354,14 @@ type MessageReceipt struct {
 	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
 	ReadAt      *time.Time `json:"read_at,omitempty"`
 }
+
+// TeamSessionLink is the domain representation of a team_session_links row.
+// LinkType is "leader"|"member"|"delegate" (free string, not a Valid() enum).
+type TeamSessionLink struct {
+	ID        string    `json:"id"`
+	TeamID    string    `json:"team_id"`
+	MemberID  string    `json:"member_id"`
+	SessionID string    `json:"session_id"`
+	LinkType  string    `json:"link_type"`
+	LinkedAt  time.Time `json:"linked_at"`
+}

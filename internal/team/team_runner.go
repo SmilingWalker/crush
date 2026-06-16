@@ -92,6 +92,10 @@ func NewTeamRunner(svc Service, factory agent.AgentFactory) TeamRunner {
 // StartTeam loads all non-terminal members from the DB and starts their
 // MemberRunners. Already-registered members are left untouched; only members
 // that are not in the registry yet are created and started.
+//
+// For each member, it calls RecoverMemberSession to find any previously
+// linked session (M4-10). If a session link exists, the member's SessionID
+// is restored so MemberRunner can resume the conversation.
 func (t *teamRunner) StartTeam(ctx context.Context, teamID string) error {
 	members, err := t.svc.ListMembers(ctx, teamID)
 	if err != nil {
@@ -108,6 +112,15 @@ func (t *teamRunner) StartTeam(ctx context.Context, teamID string) error {
 		// Skip already-registered members.
 		if _, exists := t.members[member.ID]; exists {
 			continue
+		}
+		// Recover session link for this member (M4-10).
+		sessionID, err := t.svc.RecoverMemberSession(ctx, teamID, member.ID)
+		if err != nil {
+			// Logged at call site; non-fatal — member starts without a session.
+			sessionID = ""
+		}
+		if sessionID != "" {
+			member.SessionID = &sessionID
 		}
 		spec := agent.AgentSpec{}
 		mr := NewMemberRunner(member.ID, teamID, spec, t.factory, t.svc)

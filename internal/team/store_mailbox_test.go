@@ -177,6 +177,7 @@ func TestSendMessage_Direct(t *testing.T) {
 		NewTeamStore(q), NewMemberStore(q), NewTaskStore(q),
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
+		NewSessionLinkStore(q),
 		WithEnabledGate(func() bool { return true }),
 	)
 	ctx := context.Background()
@@ -204,6 +205,7 @@ func TestSendMessage_Broadcast(t *testing.T) {
 		NewTeamStore(q), NewMemberStore(q), NewTaskStore(q),
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
+		NewSessionLinkStore(q),
 		WithEnabledGate(func() bool { return true }),
 	)
 	ctx := context.Background()
@@ -241,6 +243,7 @@ func TestSendMessage_Role(t *testing.T) {
 		NewTeamStore(q), NewMemberStore(q), NewTaskStore(q),
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
+		NewSessionLinkStore(q),
 		WithEnabledGate(func() bool { return true }),
 	)
 	ctx := context.Background()
@@ -273,6 +276,7 @@ func TestSendMessage_GateOff(t *testing.T) {
 		NewTeamStore(q), NewMemberStore(q), NewTaskStore(q),
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
+		NewSessionLinkStore(q),
 		// NO WithEnabledGate
 	)
 	ctx := context.Background()
