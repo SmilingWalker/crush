@@ -204,7 +204,7 @@ func TestMemberRunner_Start_IdleLoop_Wake_Run_Success(t *testing.T) {
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
 
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
 
 	// Start should load DB state, enter idle, launch loop.
 	err = mr.Start(context.Background())
@@ -249,7 +249,7 @@ func TestMemberRunner_handleWake_BusyPreservesWakeup(t *testing.T) {
 
 	mockRunner := &recordingTurnRunner{}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 
@@ -284,7 +284,7 @@ func TestMemberRunner_handleWake_RunError(t *testing.T) {
 		runErr:    errors.New("LLM error"),
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 
@@ -321,7 +321,7 @@ func TestMemberRunner_Start_AlreadyStartedReturnsError(t *testing.T) {
 	require.NoError(t, err)
 
 	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{},
-		&stubAgentFactory{runner: &recordingTurnRunner{}}, svc)
+		&stubAgentFactory{runner: &recordingTurnRunner{}}, svc, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 
