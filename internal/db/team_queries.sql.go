@@ -893,3 +893,89 @@ func (q *Queries) MarkRead(ctx context.Context, arg MarkReadParams) error {
 	)
 	return err
 }
+
+const insertSessionLink = `-- name: InsertSessionLink :one
+INSERT INTO team_session_links (id, team_id, member_id, session_id, link_type, linked_at)
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id, team_id, member_id, session_id, link_type, linked_at
+`
+
+type InsertSessionLinkParams struct {
+	ID        string `json:"id"`
+	TeamID    string `json:"team_id"`
+	MemberID  string `json:"member_id"`
+	SessionID string `json:"session_id"`
+	LinkType  string `json:"link_type"`
+	LinkedAt  int64  `json:"linked_at"`
+}
+
+func (q *Queries) InsertSessionLink(ctx context.Context, arg InsertSessionLinkParams) (TeamSessionLink, error) {
+	row := q.queryRow(ctx, q.insertSessionLinkStmt, insertSessionLink,
+		arg.ID, arg.TeamID, arg.MemberID, arg.SessionID, arg.LinkType, arg.LinkedAt,
+	)
+	var i TeamSessionLink
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.MemberID, &i.SessionID, &i.LinkType, &i.LinkedAt,
+	)
+	return i, err
+}
+
+const getSessionLinkByMember = `-- name: GetSessionLinkByMember :one
+SELECT id, team_id, member_id, session_id, link_type, linked_at
+FROM team_session_links
+WHERE team_id = ? AND member_id = ? AND link_type = 'member'
+ORDER BY linked_at DESC
+LIMIT 1
+`
+
+type GetSessionLinkByMemberParams struct {
+	TeamID   string `json:"team_id"`
+	MemberID string `json:"member_id"`
+}
+
+func (q *Queries) GetSessionLinkByMember(ctx context.Context, arg GetSessionLinkByMemberParams) (TeamSessionLink, error) {
+	row := q.queryRow(ctx, q.getSessionLinkByMemberStmt, getSessionLinkByMember,
+		arg.TeamID, arg.MemberID,
+	)
+	var i TeamSessionLink
+	err := row.Scan(
+		&i.ID, &i.TeamID, &i.MemberID, &i.SessionID, &i.LinkType, &i.LinkedAt,
+	)
+	return i, err
+}
+
+const getSessionLinksByTeam = `-- name: GetSessionLinksByTeam :many
+SELECT id, team_id, member_id, session_id, link_type, linked_at
+FROM team_session_links
+WHERE team_id = ?
+ORDER BY linked_at DESC
+`
+
+type GetSessionLinksByTeamParams struct {
+	TeamID string `json:"team_id"`
+}
+
+func (q *Queries) GetSessionLinksByTeam(ctx context.Context, arg GetSessionLinksByTeamParams) ([]TeamSessionLink, error) {
+	rows, err := q.query(ctx, q.getSessionLinksByTeamStmt, getSessionLinksByTeam, arg.TeamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TeamSessionLink{}
+	for rows.Next() {
+		var i TeamSessionLink
+		if err := rows.Scan(
+			&i.ID, &i.TeamID, &i.MemberID, &i.SessionID, &i.LinkType, &i.LinkedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

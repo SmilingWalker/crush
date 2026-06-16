@@ -147,3 +147,21 @@ WHERE message_id = ? AND to_member_id = ?;
 UPDATE team_message_receipts
 SET read_at = ?
 WHERE message_id = ? AND to_member_id = ?;
+
+-- M4-10: Session link queries
+
+-- name: InsertSessionLink :one
+INSERT INTO team_session_links (id, team_id, member_id, session_id, link_type, linked_at)
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING *;
+
+-- name: GetSessionLinkByMember :one
+SELECT * FROM team_session_links
+WHERE team_id = ? AND member_id = ? AND link_type = 'member'
+ORDER BY linked_at DESC
+LIMIT 1;
+
+-- name: GetSessionLinksByTeam :many
+SELECT * FROM team_session_links
+WHERE team_id = ?
+ORDER BY linked_at DESC;

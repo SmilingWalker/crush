@@ -227,3 +227,14 @@ func toMessageReceipt(r db.TeamMessageReceipt) MessageReceipt {
 		ReadAt:      nullInt64ToTimePtr(r.ReadAt),
 	}
 }
+
+func toSessionLink(r db.TeamSessionLink) TeamSessionLink {
+	return TeamSessionLink{
+		ID:        r.ID,
+		TeamID:    r.TeamID,
+		MemberID:  r.MemberID,
+		SessionID: r.SessionID,
+		LinkType:  r.LinkType,
+		LinkedAt:  time.UnixMilli(r.LinkedAt),
+	}
+}

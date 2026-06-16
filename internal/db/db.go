@@ -222,6 +222,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.markReadStmt, err = db.PrepareContext(ctx, markRead); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkRead: %w", err)
 	}
+	if q.insertSessionLinkStmt, err = db.PrepareContext(ctx, insertSessionLink); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertSessionLink: %w", err)
+	}
+	if q.getSessionLinkByMemberStmt, err = db.PrepareContext(ctx, getSessionLinkByMember); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSessionLinkByMember: %w", err)
+	}
+	if q.getSessionLinksByTeamStmt, err = db.PrepareContext(ctx, getSessionLinksByTeam); err != nil {
+		return nil, fmt.Errorf("error preparing query GetSessionLinksByTeam: %w", err)
+	}
 	return &q, nil
 }
 
@@ -557,6 +566,21 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing markReadStmt: %w", cerr)
 		}
 	}
+	if q.insertSessionLinkStmt != nil {
+		if cerr := q.insertSessionLinkStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertSessionLinkStmt: %w", cerr)
+		}
+	}
+	if q.getSessionLinkByMemberStmt != nil {
+		if cerr := q.getSessionLinkByMemberStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSessionLinkByMemberStmt: %w", cerr)
+		}
+	}
+	if q.getSessionLinksByTeamStmt != nil {
+		if cerr := q.getSessionLinksByTeamStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getSessionLinksByTeamStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -662,6 +686,9 @@ type Queries struct {
 	insertReceiptStmt              *sql.Stmt
 	markDeliveredStmt              *sql.Stmt
 	markReadStmt                   *sql.Stmt
+	insertSessionLinkStmt          *sql.Stmt
+	getSessionLinkByMemberStmt     *sql.Stmt
+	getSessionLinksByTeamStmt      *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -734,5 +761,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		insertReceiptStmt:              q.insertReceiptStmt,
 		markDeliveredStmt:              q.markDeliveredStmt,
 		markReadStmt:                   q.markReadStmt,
+		insertSessionLinkStmt:          q.insertSessionLinkStmt,
+		getSessionLinkByMemberStmt:     q.getSessionLinkByMemberStmt,
+		getSessionLinksByTeamStmt:      q.getSessionLinksByTeamStmt,
 	}
 }

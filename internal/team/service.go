@@ -150,6 +150,8 @@ type Service interface {
 	SendMessage(ctx context.Context, req SendMessageRequest) ([]string, error)
 	GetUnreadMessages(ctx context.Context, memberID string, limit int) ([]MailboxMessage, error)
 
+		RecoverMemberSession(ctx context.Context, teamID, memberID string) (string, error)
+
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
 	DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
 }
@@ -165,6 +167,7 @@ type teamService struct {
 	events  EventStore
 	audits  AuditStore
 	mailbox MailboxStore
+	links   SessionLinkStore
 	enabled func() bool
 }
 
@@ -177,9 +180,9 @@ func WithEnabledGate(fn func() bool) ServiceOption {
 	return func(s *teamService) { s.enabled = fn }
 }
 
-// NewService builds a Service over the given *sql.DB + 7 stores. The feature
+// NewService builds a Service over the given *sql.DB + 8 stores. The feature
 // gate defaults to disabled; pass WithEnabledGate to enable.
-func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStore, runs RunStore, events EventStore, audits AuditStore, mailbox MailboxStore, opts ...ServiceOption) Service {
+func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStore, runs RunStore, events EventStore, audits AuditStore, mailbox MailboxStore, links SessionLinkStore, opts ...ServiceOption) Service {
 	s := &teamService{
 		db:      db,
 		teams:   teams,
@@ -189,6 +192,7 @@ func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStor
 		events:  events,
 		audits:  audits,
 		mailbox: mailbox,
+		links:   links,
 		enabled: func() bool { return false }, // safe default: disabled until wired
 	}
 	for _, opt := range opts {
@@ -744,6 +748,30 @@ func (s *teamService) GetTeamCost(ctx context.Context, teamID string) (TeamCost,
 
 	members := AggregateByMember(teamRuns)
 	return AggregateTeamCost(teamID, members), nil
+}
+
+// --- session link methods ---
+
+// RecoverMemberSession returns the most recent session_id linked to a member.
+// Returns ("", nil) if no link exists (member has no linked session yet).
+// M4-10 Session Links.
+func (s *teamService) RecoverMemberSession(ctx context.Context, teamID, memberID string) (string, error) {
+	if err := s.enabledGuard(); err != nil {
+		return "", err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	link, err := s.links.GetSessionLinkByMember(ctx, tx, teamID, memberID)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
+	}
+	return link.SessionID, nil
 }
 
 // --- event + snapshot + debug methods ---
