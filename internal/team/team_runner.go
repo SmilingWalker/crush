@@ -236,13 +236,7 @@ func (t *teamRunner) Status(ctx context.Context, teamID string) (TeamRuntimeStat
 		if mr.TeamID != teamID {
 			continue
 		}
-		mr.mu.Lock()
-		ms := MemberRuntimeState{
-			State:        mr.State,
-			Role:         mr.Role,
-			CurrentRunID: mr.currentRunID,
-		}
-		mr.mu.Unlock()
+		ms := mr.Status()
 		status.Members[id] = ms
 		if ms.State == MemberRunning || ms.State == MemberQueued {
 			status.ActiveRuns++

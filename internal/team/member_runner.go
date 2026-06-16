@@ -139,6 +139,18 @@ func (m *MemberRunner) transitionLocked(to MemberStatus) {
 		"member_id", m.ID, "from", m.State, "to", to)
 }
 
+// Status returns a point-in-time snapshot of this member's runtime state.
+// Safe to call from any goroutine — handles its own locking.
+func (m *MemberRunner) Status() MemberRuntimeState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return MemberRuntimeState{
+		State:        m.State,
+		Role:         m.Role,
+		CurrentRunID: m.currentRunID,
+	}
+}
+
 // Wake enqueues a wake source. If the channel is full, the source is dropped
 // (logged at Warn level). Non-blocking — safe to call from any goroutine.
 func (m *MemberRunner) Wake(source WakeSource) {
