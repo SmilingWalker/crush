@@ -145,7 +145,7 @@ func (t *teamRunner) StartTeam(ctx context.Context, teamID string) error {
 		mr := NewMemberRunner(member.ID, teamID, spec, t.factory, t.svc, t.createSession)
 		t.members[member.ID] = mr
 		go func() {
-			if err := mr.Start(ctx); err != nil {
+			if err := mr.Start(context.Background()); err != nil {
 				slog.Error("StartTeam: member Start failed",
 					"member_id", member.ID, "team_id", teamID, "error", err)
 			}
@@ -196,7 +196,9 @@ func (t *teamRunner) SpawnMember(ctx context.Context, teamID, name, role, agentP
 	}
 
 	mr := NewMemberRunner(dbMember.ID, teamID, spec, t.factory, t.svc, t.createSession)
-	if err := mr.Start(ctx); err != nil {
+	// Use background context — the member's lifetime is independent of the
+	// spawning call's context (which is a short-lived tool handler ctx).
+	if err := mr.Start(context.Background()); err != nil {
 		return TeamMember{}, fmt.Errorf("start member runner: %w", err)
 	}
 
