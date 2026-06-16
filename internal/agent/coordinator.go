@@ -121,6 +121,10 @@ type coordinator struct {
 	activeSubAgents   map[string]*activeSubAgent
 	activeSubAgentsMu sync.RWMutex
 
+	// extraTools are tools injected via AppendTools that survive SetTools
+	// rebuilds (UpdateModels calls SetTools, which wipes them).
+	extraTools []fantasy.AgentTool
+
 	readyWg errgroup.Group
 }
 
@@ -1017,6 +1021,7 @@ func (c *coordinator) Model() Model {
 }
 
 func (c *coordinator) AppendTools(tools []fantasy.AgentTool) {
+	c.extraTools = append(c.extraTools, tools...)
 	c.currentAgent.AppendTools(tools)
 }
 
@@ -1118,6 +1123,9 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		return err
 	}
 	c.currentAgent.SetTools(tools)
+	if len(c.extraTools) > 0 {
+		c.currentAgent.AppendTools(c.extraTools)
+	}
 	return nil
 }
 

@@ -42,6 +42,8 @@ func (s *stubCoordinator) ClearQueue(string)                 {}
 func (s *stubCoordinator) Summarize(context.Context, string) error {
 	return nil
 }
+func (s *stubCoordinator) AppendTools([]fantasy.AgentTool) {}
+
 func (s *stubCoordinator) Model() agent.Model                 { return agent.Model{} }
 func (s *stubCoordinator) UpdateModels(context.Context) error { return nil }
 func (s *stubCoordinator) BuildSessionAgent(ctx context.Context, spec agent.AgentSpec) (agent.SessionAgent, error) {
