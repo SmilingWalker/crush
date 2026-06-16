@@ -1,8 +1,8 @@
 // leader_tools.go — M4.5: Leader Tools
-// (team_create, team_spawn_member, team_list, team_status)
+// (team_create, team_spawn_member, team_list, team_status, team_send_message)
 //
-// Four fantasy.AgentTool builders injected into the coder agent so the model
-// can create teams and spawn members through normal chat conversation.
+// Five fantasy.AgentTool builders injected into the coder agent so the model
+// can create teams, spawn members, send messages, and inspect state.
 //
 // Design (spec 2026-06-16-m4.5-leader-tools-design.md):
 //   - Tools are closures capturing Service + TeamRunner (same pattern as M4-06).
@@ -205,3 +205,74 @@ func NewTeamStatusTool(runner TeamRunner) fantasy.AgentTool {
 		},
 	)
 }
+
+// =============================================================================
+// team_send_message (leader variant)
+// =============================================================================
+
+// LeaderSendMessageParams is the leader's variant of TeamSendMessageParams.
+// Unlike the member variant, team_id is a parameter since the leader manages
+// multiple teams and isn't a team member itself.
+type LeaderSendMessageParams struct {
+	TeamID        string `json:"team_id"`
+	RecipientType string `json:"recipient_type"`
+	ToMemberID    string `json:"to_member_id,omitempty"`
+	ToRole        string `json:"to_role,omitempty"`
+	Kind          string `json:"kind"`
+	Summary       string `json:"summary"`
+	Payload       string `json:"payload"`
+}
+
+// NewLeaderSendMessageTool returns a fantasy.AgentTool for the leader to send
+// messages to team members. Uses the same M4-04 SendMessage API as the member
+// variant, but team_id is a parameter (not captured) because the leader can
+// manage multiple teams.
+func NewLeaderSendMessageTool(svc Service) fantasy.AgentTool {
+	return fantasy.NewAgentTool(
+		TeamSendMessageToolName + "_leader",
+		teamSpawnMemberDesc, // reuse member send description
+		func(ctx context.Context, params LeaderSendMessageParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			if strings.TrimSpace(params.TeamID) == "" {
+				return newTextError("team_id is required"), nil
+			}
+			kind := MessageKind(params.Kind)
+			if !kind.Valid() {
+				return newTextError(fmt.Sprintf(
+					"invalid kind %q (valid: message, task_status, task_assignment, shutdown_request, shutdown_ack)",
+					params.Kind,
+				)), nil
+			}
+			recipientType := RecipientType(params.RecipientType)
+			if !recipientType.Valid() {
+				return newTextError(fmt.Sprintf(
+					"invalid recipient_type %q (valid: direct, broadcast, role)",
+					params.RecipientType,
+				)), nil
+			}
+			if recipientType == RecipientDirect && strings.TrimSpace(params.ToMemberID) == "" {
+				return newTextError("to_member_id is required for direct messages"), nil
+			}
+			recipientIDs, err := svc.SendMessage(ctx, SendMessageRequest{
+				TeamID:        params.TeamID,
+				FromMemberID:  "leader",
+				RecipientType: recipientType,
+				ToMemberID:    params.ToMemberID,
+				ToRole:        params.ToRole,
+				Kind:          kind,
+				Summary:       params.Summary,
+				Payload:       params.Payload,
+			})
+			if err != nil {
+				return newTextError(fmt.Sprintf("send failed: %s", err.Error())), nil
+			}
+			recipientList := "none"
+			if len(recipientIDs) > 0 {
+				recipientList = strings.Join(recipientIDs, ", ")
+			}
+			return newTextResponse(
+				fmt.Sprintf("Message sent to %d recipient(s): %s", len(recipientIDs), recipientList),
+			), nil
+		},
+	)
+}
+

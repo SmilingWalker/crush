@@ -189,6 +189,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			team.NewTeamSpawnMemberTool(app.team, app.teamRunner),
 			team.NewTeamListTool(app.team),
 			team.NewTeamStatusTool(app.teamRunner),
+			team.NewLeaderSendMessageTool(app.team),
 		})
 	}
 
