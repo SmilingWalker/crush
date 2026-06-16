@@ -69,9 +69,11 @@ type MemberRunner struct {
 	currentRunID string
 	sessionID    string
 
-	mu     sync.Mutex
-	ctx    context.Context
-	cancel context.CancelFunc
+	mu           sync.Mutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	shuttingDown bool                       // set during Shutdown; loop drops wakes when true
+	flushFn      func(context.Context) error // flush pending writes before terminal state (nil-safe)
 }
 
 // NewMemberRunner creates a MemberRunner in MemberCreated state. The factory
@@ -145,19 +147,11 @@ func (m *MemberRunner) Wake(source WakeSource) {
 	}
 }
 
-// Stop initiates shutdown: cancels the loop context and transitions to stopped.
+// Stop initiates shutdown via the 9-step Shutdown sequence in Force mode.
 // Safe to call multiple times. After Stop, the member is terminal (stopped).
+// This is the fast shutdown path: stopWakeups + cancel + markRunTerminal + stopped.
 func (m *MemberRunner) Stop() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.State == MemberStopped || m.State == MemberFailed {
-		return // already terminal
-	}
-	if m.cancel != nil {
-		m.cancel()
-	}
-	m.transitionLocked(MemberShuttingDown)
-	m.transitionLocked(MemberStopped)
+	_ = m.Shutdown(context.Background(), StopForce)
 }
 
 // Start loads the member from DB, builds the TurnRunner via factory, enters idle
@@ -222,6 +216,7 @@ func (m *MemberRunner) Start(ctx context.Context) error {
 
 // loop is the main event loop. It blocks on the context or wake channel.
 // All work is serial — only one wake is processed at a time.
+// During shutdown (shuttingDown flag set), incoming wakes are dropped.
 func (m *MemberRunner) loop() {
 	defer m.cancel()
 	for {
@@ -229,6 +224,14 @@ func (m *MemberRunner) loop() {
 		case <-m.ctx.Done():
 			return
 		case source := <-m.wakeCh:
+			m.mu.Lock()
+			if m.shuttingDown {
+				m.mu.Unlock()
+				slog.Debug("loop: dropping wake during shutdown",
+					"member_id", m.ID, "source", source)
+				continue
+			}
+			m.mu.Unlock()
 			m.handleWake(source)
 		}
 	}

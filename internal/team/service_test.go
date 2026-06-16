@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/crush/internal/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +21,6 @@ func newServiceFixture(t *testing.T) (Service, *sql.DB) {
 		NewTeamStore(q), NewMemberStore(q), NewTaskStore(q),
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
-		NewSessionLinkStore(q),
 		WithEnabledGate(func() bool { return true }),
 	)
 	return svc, sqlDB
@@ -35,7 +33,6 @@ func TestService_FeatureGateOffReturnsErrFeatureDisabled(t *testing.T) {
 		NewTeamStore(q), NewMemberStore(q), NewTaskStore(q),
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
-		NewSessionLinkStore(q),
 		// NO WithEnabledGate → default disabled (Seam 1 safe default)
 	)
 	_, err := svc.CreateTeam(context.Background(), CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "X"})
@@ -154,7 +151,6 @@ func TestService_UpdateTask_PropagatesErrVersionConflict(t *testing.T) {
 		NewTeamStore(q), NewMemberStore(q), &stubConflictTaskStore{conflictErr: ErrVersionConflict},
 		NewRunStore(q), NewEventStore(q), NewAuditStore(q),
 		NewMailboxStore(q),
-		NewSessionLinkStore(q),
 		WithEnabledGate(func() bool { return true }),
 	)
 	_, err := svc.UpdateTask(context.Background(), UpdateTaskRequest{ID: "tk1", TeamID: "t1", Status: TaskInProgress})
@@ -233,33 +229,33 @@ func TestService_MarkRunTerminal(t *testing.T) {
 	require.NoError(t, svc.MarkRunTerminal(ctx, MarkRunTerminalRequest{TeamID: snap.Team.ID, RunID: run.ID, Status: RunFailed, Error: "boom", UsageStatus: "partial"}))
 }
 
-func TestService_RecoverMemberSession(t *testing.T) {
+func TestService_PublishMemberEvent(t *testing.T) {
 	svc, sqlDB := newServiceFixture(t)
 	ctx := context.Background()
-
-	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws", LeaderSessionID: "l", Name: "T"})
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws-pub", LeaderSessionID: "l", Name: "T"})
 	require.NoError(t, err)
 	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
 	require.NoError(t, err)
 
-	// No link yet — should return empty session_id.
-	sessionID, err := svc.RecoverMemberSession(ctx, snap.Team.ID, m.ID)
+	// Publish a member.shutting_down event.
+	err = svc.PublishMemberEvent(ctx, m.TeamID, m.ID, "member.shutting_down")
 	require.NoError(t, err)
-	assert.Equal(t, "", sessionID)
 
-	// Create a session link via the store using the same sqlDB connection.
-	links := NewSessionLinkStore(db.New(sqlDB))
-	runTx(t, sqlDB, func(tx *sql.Tx) error {
-		_, err := links.CreateSessionLink(ctx, tx, TeamSessionLink{
-			ID: "sl-recover", TeamID: snap.Team.ID, MemberID: m.ID,
-			SessionID: "sess-recover", LinkType: "member",
-			LinkedAt: time.Now(),
-		})
-		return err
-	})
+	// Verify the event was written with PublishedAt set.
+	var eventCount int
+	var publishedAt sql.NullInt64
+	row := sqlDB.QueryRow(`SELECT count(*), published_at FROM team_events WHERE team_id = ? AND event_type = 'member.shutting_down' AND entity_id = ?`,
+		snap.Team.ID, m.ID)
+	require.NoError(t, row.Scan(&eventCount, &publishedAt))
+	assert.Equal(t, 1, eventCount, "PublishMemberEvent wrote exactly 1 member.shutting_down event")
+	assert.True(t, publishedAt.Valid, "published_at should be set (non-null)")
 
-	// Now RecoverMemberSession returns the linked session.
-	sessionID, err = svc.RecoverMemberSession(ctx, snap.Team.ID, m.ID)
+	// Publish a member.stopped event.
+	err = svc.PublishMemberEvent(ctx, m.TeamID, m.ID, "member.stopped")
 	require.NoError(t, err)
-	assert.Equal(t, "sess-recover", sessionID)
+
+	row = sqlDB.QueryRow(`SELECT count(*) FROM team_events WHERE team_id = ? AND event_type = 'member.stopped' AND entity_id = ?`,
+		snap.Team.ID, m.ID)
+	require.NoError(t, row.Scan(&eventCount))
+	assert.Equal(t, 1, eventCount, "PublishMemberEvent wrote exactly 1 member.stopped event")
 }

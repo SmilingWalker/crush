@@ -154,6 +154,11 @@ type Service interface {
 
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
 	DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
+
+	// PublishMemberEvent writes a member lifecycle event with PublishedAt = now.
+	// Used by shutdown/stop sequences for explicit lifecycle events (e.g.,
+	// member.shutting_down, member.stopped).
+	PublishMemberEvent(ctx context.Context, teamID, memberID, eventType string) error
 }
 
 // --- service struct + constructor (Seam 4) ---
@@ -845,4 +850,36 @@ func (s *teamService) DebugSnapshot(ctx context.Context, teamID string) (DebugSn
 		Events:       events,
 		Audit:        audit,
 	}, nil
+}
+
+// PublishMemberEvent writes a member lifecycle event with PublishedAt set to now.
+// Used by shutdown/stop sequences for explicit lifecycle events (e.g.,
+// member.shutting_down, member.stopped). It looks up the workspace_id from the
+// team store, allocates an event seq, and appends the event in a single tx.
+func (s *teamService) PublishMemberEvent(ctx context.Context, teamID, memberID, eventType string) error {
+	if err := s.enabledGuard(); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	ts := now()
+	team, err := s.teams.GetTeam(ctx, tx, teamID)
+	if err != nil {
+		return fmt.Errorf("get team: %w", err)
+	}
+	seq, err := s.events.NextEventSeq(ctx, tx, teamID, ts)
+	if err != nil {
+		return fmt.Errorf("alloc event seq: %w", err)
+	}
+	if err := s.events.AppendEvent(ctx, tx, TeamEvent{
+		Seq: seq, ID: uuid.New().String(), WorkspaceID: team.WorkspaceID, TeamID: teamID,
+		EventType: eventType, EntityType: "member", EntityID: memberID,
+		ActorMemberID: &memberID, PublishedAt: &ts, CreatedAt: ts,
+	}); err != nil {
+		return fmt.Errorf("append event: %w", err)
+	}
+	return tx.Commit()
 }
