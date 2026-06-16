@@ -348,19 +348,9 @@ func truncateOrPad(s string, maxLen int) string {
 // --- helpers ---
 
 // formatCost renders cost in micros to a human-readable string.
-// Uses the same scale as the team domain: 1 token ≈ 1 micro.
+// Delegates to the domain-level team.FormatCost; aggregate totals are treated
+// as final (known cost) since unknown runs contribute nil cost and are excluded
+// by the snapshot builder.
 func formatCost(micros int64) string {
-	if micros >= 1_000_000_000_000 {
-		return fmt.Sprintf("%.1fT tokens", float64(micros)/1_000_000_000_000)
-	}
-	if micros >= 1_000_000_000 {
-		return fmt.Sprintf("%.1fB tokens", float64(micros)/1_000_000_000)
-	}
-	if micros >= 1_000_000 {
-		return fmt.Sprintf("%.1fM tokens", float64(micros)/1_000_000)
-	}
-	if micros >= 1_000 {
-		return fmt.Sprintf("%.1fK tokens", float64(micros)/1_000)
-	}
-	return fmt.Sprintf("%d tokens", micros)
+	return team.FormatCost(micros, team.UsageStatusFinal)
 }
