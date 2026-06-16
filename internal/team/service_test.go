@@ -228,3 +228,34 @@ func TestService_MarkRunTerminal(t *testing.T) {
 	// MarkRunTerminal guards on status='running' (StartRun set RunRunning) → matches.
 	require.NoError(t, svc.MarkRunTerminal(ctx, MarkRunTerminalRequest{TeamID: snap.Team.ID, RunID: run.ID, Status: RunFailed, Error: "boom", UsageStatus: "partial"}))
 }
+
+func TestService_PublishMemberEvent(t *testing.T) {
+	svc, sqlDB := newServiceFixture(t)
+	ctx := context.Background()
+	snap, err := svc.CreateTeam(ctx, CreateTeamRequest{WorkspaceID: "ws-pub", LeaderSessionID: "l", Name: "T"})
+	require.NoError(t, err)
+	m, err := svc.SpawnMember(ctx, SpawnMemberRequest{TeamID: snap.Team.ID, Name: "coder", Role: "programmer", AgentProfile: "{}"})
+	require.NoError(t, err)
+
+	// Publish a member.shutting_down event.
+	err = svc.PublishMemberEvent(ctx, m.TeamID, m.ID, "member.shutting_down")
+	require.NoError(t, err)
+
+	// Verify the event was written with PublishedAt set.
+	var eventCount int
+	var publishedAt sql.NullInt64
+	row := sqlDB.QueryRow(`SELECT count(*), published_at FROM team_events WHERE team_id = ? AND event_type = 'member.shutting_down' AND entity_id = ?`,
+		snap.Team.ID, m.ID)
+	require.NoError(t, row.Scan(&eventCount, &publishedAt))
+	assert.Equal(t, 1, eventCount, "PublishMemberEvent wrote exactly 1 member.shutting_down event")
+	assert.True(t, publishedAt.Valid, "published_at should be set (non-null)")
+
+	// Publish a member.stopped event.
+	err = svc.PublishMemberEvent(ctx, m.TeamID, m.ID, "member.stopped")
+	require.NoError(t, err)
+
+	row = sqlDB.QueryRow(`SELECT count(*) FROM team_events WHERE team_id = ? AND event_type = 'member.stopped' AND entity_id = ?`,
+		snap.Team.ID, m.ID)
+	require.NoError(t, row.Scan(&eventCount))
+	assert.Equal(t, 1, eventCount, "PublishMemberEvent wrote exactly 1 member.stopped event")
+}

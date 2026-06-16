@@ -118,9 +118,8 @@ func (t *teamRunner) StartTeam(ctx context.Context, teamID string) error {
 }
 
 // StopTeam shuts down all registered members for the given team using the
-// specified StopMode. For StopGraceful, it polls each member's state until
-// idle/stopped/failed with a per-member deadline; for StopCancel/StopForce,
-// it calls Stop() immediately.
+// specified StopMode. Each member's Shutdown() handles the full 9-step sequence
+// including the wait loop, so the TeamRunner no longer polls externally.
 func (t *teamRunner) StopTeam(ctx context.Context, teamID string, mode StopMode) error {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -129,26 +128,7 @@ func (t *teamRunner) StopTeam(ctx context.Context, teamID string, mode StopMode)
 		if mr.TeamID != teamID {
 			continue
 		}
-		switch mode {
-		case StopGraceful:
-			deadline := time.Now().Add(30 * time.Second)
-			for time.Now().Before(deadline) {
-				mr.mu.Lock()
-				state := mr.State
-				mr.mu.Unlock()
-				if state == MemberIdle || state == MemberStopped || state == MemberFailed {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(100 * time.Millisecond):
-				}
-			}
-			mr.Stop()
-		case StopCancel, StopForce:
-			mr.Stop()
-		}
+		_ = mr.Shutdown(ctx, mode)
 	}
 	return nil
 }
@@ -179,10 +159,9 @@ func (t *teamRunner) SpawnMember(ctx context.Context, teamID, name, role, agentP
 	return dbMember, nil
 }
 
-// StopMember looks up a member by ID and stops it with the given mode.
-// For StopGraceful, it polls the member's state until idle/stopped/failed
-// (with a 30s deadline) before calling Stop(). For StopCancel/StopForce,
-// it calls Stop() immediately.
+// StopMember looks up a member by ID and shuts it down with the given mode.
+// Delegates to MemberRunner.Shutdown() which handles the full 9-step sequence
+// including wait loops — no external polling needed.
 func (t *teamRunner) StopMember(ctx context.Context, teamID, memberID string, mode StopMode) error {
 	t.mu.RLock()
 	mr, ok := t.members[memberID]
@@ -190,42 +169,19 @@ func (t *teamRunner) StopMember(ctx context.Context, teamID, memberID string, mo
 	if !ok {
 		return fmt.Errorf("member %s not found in team %s", memberID, teamID)
 	}
-
-	switch mode {
-	case StopGraceful:
-		deadline := time.Now().Add(30 * time.Second)
-		for time.Now().Before(deadline) {
-			mr.mu.Lock()
-			state := mr.State
-			mr.mu.Unlock()
-			if state == MemberIdle || state == MemberStopped || state == MemberFailed {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(100 * time.Millisecond):
-			}
-		}
-		mr.Stop()
-	case StopCancel, StopForce:
-		mr.Stop()
-	}
-	return nil
+	return mr.Shutdown(ctx, mode)
 }
 
-// CancelMemberTurn cancels a member's current turn. Idempotent — calling it
-// on an already-stopped or failed member is a no-op.
+// CancelMemberTurn cancels a member's current turn via the full 9-step shutdown
+// sequence in Cancel mode. Idempotent — calling it on an already-stopped or
+// failed member is a no-op (Shutdown handles this internally).
 //
-// The cancel sequence follows the validTransitions state machine:
-//   running → canceling_turn (CAS)
-//   cancel context → wait for handleWake to detect ctx.Done()
-//   idle → shutting_down → stopped (terminal)
+// The Shutdown sequence subsumes the previous inline cancel logic:
+//   stopWakeups → shutdown event → cancel context → wait for drain →
+//   flush → MarkRunTerminal(RunCanceled) → stopped → stopped event → publish
 //
-// This is critical for acceptance #5: late Run results are guarded by
-// validTransitions — a transitionLocked to MemberIdle from MemberStopped
-// (or MemberShuttingDown) is invalid, so the late result cannot overwrite
-// the terminal state.
+// Late run result safety (acceptance #5) is preserved: validTransitions
+// prevents transitionLocked to Idle from Stopped/ShuttingDown.
 func (t *teamRunner) CancelMemberTurn(ctx context.Context, req CancelMemberTurnRequest) error {
 	t.mu.RLock()
 	mr, ok := t.members[req.MemberID]
@@ -233,56 +189,7 @@ func (t *teamRunner) CancelMemberTurn(ctx context.Context, req CancelMemberTurnR
 	if !ok {
 		return fmt.Errorf("member %s not found in team %s", req.MemberID, req.TeamID)
 	}
-
-	mr.mu.Lock()
-
-	// Idempotent: if already terminal, nothing to do.
-	if mr.State == MemberStopped || mr.State == MemberFailed {
-		mr.mu.Unlock()
-		return nil
-	}
-
-	// CAS: if currently in a runnable state, transition to canceling_turn.
-	// This gives handleWake a valid state to transition from when Run() returns.
-	if mr.State == MemberRunning || mr.State == MemberWaitingPermission {
-		mr.transitionLocked(MemberCancelingTurn)
-	}
-
-	// Cancel the loop context — this causes Run() to return with context.Canceled.
-	if mr.cancel != nil {
-		mr.cancel()
-	}
-	mr.mu.Unlock()
-
-	// Wait for handleWake to detect the cancelled context and transition to idle.
-	timeout := req.Timeout
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		mr.mu.Lock()
-		state := mr.State
-		mr.mu.Unlock()
-		if state == MemberIdle || state == MemberStopped || state == MemberFailed {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-
-	// Final transition to stopped via the valid path: shutting_down → stopped.
-	mr.mu.Lock()
-	if mr.State == MemberIdle || mr.State == MemberCancelingTurn {
-		mr.transitionLocked(MemberShuttingDown)
-		mr.transitionLocked(MemberStopped)
-	}
-	mr.mu.Unlock()
-
-	return nil
+	return mr.Shutdown(ctx, StopCancel)
 }
 
 // Status returns a point-in-time snapshot of all registered members for a team.
