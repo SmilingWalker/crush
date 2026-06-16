@@ -86,6 +86,11 @@ type Coordinator interface {
 	Summarize(context.Context, string) error
 	Model() Model
 	UpdateModels(ctx context.Context) error
+
+	// BuildSessionAgent creates a SessionAgent configured from the given AgentSpec.
+	// M4-14: production AgentFactory seam — maps AgentSpec fields to model selection,
+	// permission mode, tool policy, and system prompt.
+	BuildSessionAgent(ctx context.Context, spec AgentSpec) (SessionAgent, error)
 }
 
 type coordinator struct {
@@ -1004,6 +1009,86 @@ func (c *coordinator) IsSessionBusy(sessionID string) bool {
 
 func (c *coordinator) Model() Model {
 	return c.currentAgent.Model()
+}
+
+// BuildSessionAgent creates a SessionAgent configured from the given AgentSpec.
+// It maps AgentSpec fields to model selection, permission mode, tool policy, and
+// system prompt, reusing the existing buildAgent/buildTools/buildAgentModels
+// pipeline.
+func (c *coordinator) BuildSessionAgent(ctx context.Context, spec AgentSpec) (SessionAgent, error) {
+	// Map AgentSpec → config.Agent
+	agentCfg := config.Agent{
+		ID:             spec.AgentType,
+		AllowedTools:   spec.ToolPolicy.AllowedTools,
+		DisallowedTools: spec.ToolPolicy.DisallowedTools,
+		PermissionMode: spec.PermissionMode,
+		SystemPrompt:   spec.SystemPrompt,
+		Model:          config.SelectedModelType(spec.ModelType),
+	}
+
+	// Default ModelType to "large" if empty or "inherit".
+	if agentCfg.Model == "" || agentCfg.Model == "inherit" {
+		agentCfg.Model = config.SelectedModelTypeLarge
+	}
+
+	// Build models. Sub-agent model selection is based on isSubAgent=false
+	// (member agents are independent, not sub-agents).
+	large, small, err := c.buildAgentModels(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+
+	largeProviderCfg, _ := c.cfg.Config().Providers.Get(large.ModelCfg.Provider)
+
+	// Permission mode → IsYolo.
+	isYolo := spec.PermissionMode == "bypassPermissions"
+
+	result := NewSessionAgent(SessionAgentOptions{
+		LargeModel:           large,
+		SmallModel:           small,
+		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
+		SystemPrompt:         "",
+		IsSubAgent:           false,
+		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
+		IsYolo:               isYolo,
+		Sessions:             c.sessions,
+		Messages:             c.messages,
+		Tools:                nil,
+		Notify:               c.notify,
+	})
+
+	// Build system prompt in background.
+	c.readyWg.Go(func() error {
+		var systemPrompt string
+		if spec.SystemPrompt != "" {
+			// Use the caller-supplied system prompt directly.
+			systemPrompt = spec.SystemPrompt
+		} else {
+			// Default: use the member prompt template.
+			p, err := memberPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
+			if err != nil {
+				return err
+			}
+			systemPrompt, err = p.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
+			if err != nil {
+				return err
+			}
+		}
+		result.SetSystemPrompt(systemPrompt)
+		return nil
+	})
+
+	// Build tools in background.
+	c.readyWg.Go(func() error {
+		tools, err := c.buildTools(ctx, agentCfg, false)
+		if err != nil {
+			return err
+		}
+		result.SetTools(tools)
+		return nil
+	})
+
+	return result, nil
 }
 
 func (c *coordinator) UpdateModels(ctx context.Context) error {

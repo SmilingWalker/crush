@@ -14,6 +14,9 @@ var coderPromptTmpl []byte
 //go:embed templates/task.md.tpl
 var taskPromptTmpl []byte
 
+//go:embed templates/member.md.tpl
+var memberPromptTmpl []byte
+
 //go:embed templates/initialize.md.tpl
 var initializePromptTmpl []byte
 
@@ -27,6 +30,14 @@ func coderPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 
 func taskPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
 	systemPrompt, err := prompt.NewPrompt("task", string(taskPromptTmpl), opts...)
+	if err != nil {
+		return nil, err
+	}
+	return systemPrompt, nil
+}
+
+func memberPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
+	systemPrompt, err := prompt.NewPrompt("member", string(memberPromptTmpl), opts...)
 	if err != nil {
 		return nil, err
 	}
