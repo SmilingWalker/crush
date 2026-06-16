@@ -76,9 +76,17 @@ type Querier interface {
 	InsertReceipt(ctx context.Context, arg InsertReceiptParams) error
 	MarkDelivered(ctx context.Context, arg MarkDeliveredParams) error
 	MarkRead(ctx context.Context, arg MarkReadParams) error
+	AddDependency(ctx context.Context, arg AddDependencyParams) error
+	RemoveDependency(ctx context.Context, arg RemoveDependencyParams) error
+	GetDependencies(ctx context.Context, taskID string) ([]TeamTaskDependency, error)
+	GetDependents(ctx context.Context, dependsOnTaskID string) ([]TeamTaskDependency, error)
+	GetTeamDependencies(ctx context.Context, teamID string) ([]TeamTaskDependency, error)
 	InsertSessionLink(ctx context.Context, arg InsertSessionLinkParams) (TeamSessionLink, error)
+
 	GetSessionLinkByMember(ctx context.Context, arg GetSessionLinkByMemberParams) (TeamSessionLink, error)
+
 	GetSessionLinksByTeam(ctx context.Context, arg GetSessionLinksByTeamParams) ([]TeamSessionLink, error)
+
 }
 
 var _ Querier = (*Queries)(nil)

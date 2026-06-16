@@ -177,6 +177,21 @@ type TeamMailboxMessage struct {
 	CreatedAt    int64  `json:"created_at"`
 }
 
+type TeamMessageReceipt struct {
+	ID          string        `json:"id"`
+	MessageID   string        `json:"message_id"`
+	ToMemberID  string        `json:"to_member_id"`
+	DeliveredAt sql.NullInt64 `json:"delivered_at"`
+	ReadAt      sql.NullInt64 `json:"read_at"`
+}
+
+type TeamTaskDependency struct {
+	TaskID          string `json:"task_id"`
+	DependsOnTaskID string `json:"depends_on_task_id"`
+	TeamID          string `json:"team_id"`
+	CreatedAt       int64  `json:"created_at"`
+}
+
 type TeamSessionLink struct {
 	ID        string `json:"id"`
 	TeamID    string `json:"team_id"`
@@ -184,12 +199,4 @@ type TeamSessionLink struct {
 	SessionID string `json:"session_id"`
 	LinkType  string `json:"link_type"`
 	LinkedAt  int64  `json:"linked_at"`
-}
-
-type TeamMessageReceipt struct {
-	ID          string        `json:"id"`
-	MessageID   string        `json:"message_id"`
-	ToMemberID  string        `json:"to_member_id"`
-	DeliveredAt sql.NullInt64 `json:"delivered_at"`
-	ReadAt      sql.NullInt64 `json:"read_at"`
 }

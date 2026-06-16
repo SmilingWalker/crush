@@ -369,7 +369,6 @@ type TeamTaskDependency struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
-// TeamSessionLink is the domain representation of a team_session_links row.
 type TeamSessionLink struct {
 	ID        string    `json:"id"`
 	TeamID    string    `json:"team_id"`

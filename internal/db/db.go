@@ -689,6 +689,11 @@ type Queries struct {
 	insertSessionLinkStmt          *sql.Stmt
 	getSessionLinkByMemberStmt     *sql.Stmt
 	getSessionLinksByTeamStmt      *sql.Stmt
+addDependencyStmt            *sql.Stmt
+	removeDependencyStmt         *sql.Stmt
+	getDependenciesStmt          *sql.Stmt
+	getDependentsStmt            *sql.Stmt
+	getTeamDependenciesStmt      *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {

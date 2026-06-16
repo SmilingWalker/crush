@@ -151,6 +151,10 @@ type Service interface {
 	GetUnreadMessages(ctx context.Context, memberID string, limit int) ([]MailboxMessage, error)
 
 		RecoverMemberSession(ctx context.Context, teamID, memberID string) (string, error)
+AddDependency(ctx context.Context, taskID, dependsOnTaskID, teamID string) error
+	RemoveDependency(ctx context.Context, taskID, dependsOnTaskID string) error
+	OnTaskCompleted(ctx context.Context, teamID, completedTaskID string) ([]string, error)
+	GetTaskWithDeps(ctx context.Context, teamID, taskID string) (TeamTask, error)
 
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
 	DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
@@ -173,6 +177,7 @@ type teamService struct {
 	audits  AuditStore
 	mailbox MailboxStore
 	links   SessionLinkStore
+	deps    DependencyStore
 	enabled func() bool
 }
 
@@ -187,7 +192,7 @@ func WithEnabledGate(fn func() bool) ServiceOption {
 
 // NewService builds a Service over the given *sql.DB + 8 stores. The feature
 // gate defaults to disabled; pass WithEnabledGate to enable.
-func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStore, runs RunStore, events EventStore, audits AuditStore, mailbox MailboxStore, links SessionLinkStore, opts ...ServiceOption) Service {
+func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStore, runs RunStore, events EventStore, audits AuditStore, mailbox MailboxStore, links SessionLinkStore, deps DependencyStore, opts ...ServiceOption) Service {
 	s := &teamService{
 		db:      db,
 		teams:   teams,
