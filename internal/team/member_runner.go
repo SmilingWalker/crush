@@ -75,6 +75,7 @@ type MemberRunner struct {
 	shuttingDown bool                       // set during Shutdown; loop drops wakes when true
 	flushFn      func(context.Context) error // flush pending writes before terminal state (nil-safe)
 	version      int                         // DB version from last successful UpdateMemberState CAS
+	createSession func(context.Context) (string, error) // nil-safe; creates session on first wake
 }
 
 // NewMemberRunner creates a MemberRunner in MemberCreated state. The factory
@@ -85,15 +86,17 @@ func NewMemberRunner(
 	spec agent.AgentSpec,
 	factory agent.AgentFactory,
 	svc Service,
+	createSession func(context.Context) (string, error),
 ) *MemberRunner {
 	return &MemberRunner{
-		ID:      id,
-		TeamID:  teamID,
-		Spec:    spec,
-		State:   MemberCreated,
-		factory: factory,
-		svc:     svc,
-		wakeCh:  make(chan WakeSource, 10),
+		ID:            id,
+		TeamID:        teamID,
+		Spec:          spec,
+		State:         MemberCreated,
+		factory:       factory,
+		svc:           svc,
+		wakeCh:        make(chan WakeSource, 10),
+		createSession: createSession,
 	}
 }
 
@@ -270,6 +273,21 @@ func (m *MemberRunner) handleWake(source WakeSource) {
 	m.mu.Lock()
 	m.transitionLocked(MemberRunning)
 	m.mu.Unlock()
+
+	// Auto-create a session if none exists (first wake after spawn).
+	if m.sessionID == "" && m.createSession != nil {
+		sid, err := m.createSession(m.ctx)
+		if err != nil {
+			slog.Error("handleWake: createSession failed", "member_id", m.ID, "error", err)
+			m.mu.Lock()
+			m.transitionLocked(MemberFailed)
+			m.mu.Unlock()
+			return
+		}
+		m.mu.Lock()
+		m.sessionID = sid
+		m.mu.Unlock()
+	}
 
 	// Start a run record in DB.
 	run, err := m.svc.StartRun(m.ctx, StartRunRequest{

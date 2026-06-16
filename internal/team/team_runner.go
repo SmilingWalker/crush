@@ -78,10 +78,11 @@ type TeamRunner interface {
 
 // teamRunner is the concrete implementation of TeamRunner.
 type teamRunner struct {
-	svc     Service
-	factory agent.AgentFactory
-	members map[string]*MemberRunner
-	mu      sync.RWMutex
+	svc           Service
+	factory       agent.AgentFactory
+	members       map[string]*MemberRunner
+	mu            sync.RWMutex
+	createSession func(context.Context) (string, error)
 }
 
 // NewTeamRunner creates a TeamRunner wired over the given Service and
@@ -92,6 +93,18 @@ func NewTeamRunner(svc Service, factory agent.AgentFactory) TeamRunner {
 		svc:     svc,
 		factory: factory,
 		members: make(map[string]*MemberRunner),
+	}
+}
+
+// NewTeamRunnerWithSession creates a TeamRunner with session creation support.
+// When members are spawned without a session, the createSession func is called
+// on first wake to auto-create one (M4.5b gap fix).
+func NewTeamRunnerWithSession(svc Service, factory agent.AgentFactory, createSession func(context.Context) (string, error)) TeamRunner {
+	return &teamRunner{
+		svc:           svc,
+		factory:       factory,
+		members:       make(map[string]*MemberRunner),
+		createSession: createSession,
 	}
 }
 
@@ -129,7 +142,7 @@ func (t *teamRunner) StartTeam(ctx context.Context, teamID string) error {
 			member.SessionID = &sessionID
 		}
 		spec := agent.AgentSpec{}
-		mr := NewMemberRunner(member.ID, teamID, spec, t.factory, t.svc)
+		mr := NewMemberRunner(member.ID, teamID, spec, t.factory, t.svc, t.createSession)
 		t.members[member.ID] = mr
 		go func() {
 			if err := mr.Start(ctx); err != nil {
@@ -182,7 +195,7 @@ func (t *teamRunner) SpawnMember(ctx context.Context, teamID, name, role, agentP
 		return TeamMember{}, fmt.Errorf("spawn member in db: %w", err)
 	}
 
-	mr := NewMemberRunner(dbMember.ID, teamID, spec, t.factory, t.svc)
+	mr := NewMemberRunner(dbMember.ID, teamID, spec, t.factory, t.svc, t.createSession)
 	if err := mr.Start(ctx); err != nil {
 		return TeamMember{}, fmt.Errorf("start member runner: %w", err)
 	}
