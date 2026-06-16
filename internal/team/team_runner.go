@@ -69,6 +69,11 @@ type TeamRunner interface {
 	StopMember(ctx context.Context, teamID, memberID string, mode StopMode) error
 	CancelMemberTurn(ctx context.Context, req CancelMemberTurnRequest) error
 	Status(ctx context.Context, teamID string) (TeamRuntimeStatus, error)
+
+	// WakeMember sends a wake signal to a member's wake channel. Used after
+	// SendMessage so the recipient processes the new message. Returns an error
+	// if the member is not found in the registry.
+	WakeMember(ctx context.Context, teamID, memberID string, source WakeSource) error
 }
 
 // teamRunner is the concrete implementation of TeamRunner.
@@ -243,4 +248,18 @@ func (t *teamRunner) Status(ctx context.Context, teamID string) (TeamRuntimeStat
 		}
 	}
 	return status, nil
+}
+
+// WakeMember sends a wake signal to a member's wake channel. Used after
+// SendMessage so the recipient processes the new message. Returns an error
+// if the member is not found in the registry.
+func (t *teamRunner) WakeMember(ctx context.Context, teamID, memberID string, source WakeSource) error {
+	t.mu.RLock()
+	mr, ok := t.members[memberID]
+	t.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("member %s not found in team %s", memberID, teamID)
+	}
+	mr.Wake(source)
+	return nil
 }
