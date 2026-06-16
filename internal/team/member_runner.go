@@ -74,6 +74,7 @@ type MemberRunner struct {
 	cancel       context.CancelFunc
 	shuttingDown bool                       // set during Shutdown; loop drops wakes when true
 	flushFn      func(context.Context) error // flush pending writes before terminal state (nil-safe)
+	version      int                         // DB version from last successful UpdateMemberState CAS
 }
 
 // NewMemberRunner creates a MemberRunner in MemberCreated state. The factory
@@ -111,8 +112,8 @@ func (m *MemberRunner) transitionLocked(to MemberStatus) {
 			prev := m.State
 			m.State = to
 			// Async CAS update to DB. The Service handles read-then-CAS
-			// internally; we don't pass version (Seam 3 deviation from master doc).
-			// Guard against nil svc (unit tests may not wire one).
+			// internally. On success, store the new version for crash-recovery
+			// consistency. Guard against nil svc (unit tests may not wire one).
 			if m.svc != nil {
 				go func() {
 					updated, err := m.svc.UpdateMemberState(context.Background(), UpdateMemberStateRequest{
@@ -126,7 +127,9 @@ func (m *MemberRunner) transitionLocked(to MemberStatus) {
 						return
 					}
 					// CAS succeeded — the returned member has the new version.
-					_ = updated
+					m.mu.Lock()
+					m.version = updated.Version
+					m.mu.Unlock()
 				}()
 			}
 			return
