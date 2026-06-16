@@ -281,6 +281,10 @@ type UI struct {
 	// teamPanel is the M3-09 team debug snapshot panel. nil when closed.
 	teamPanel *team.Panel
 
+	// teamBar is the M5-P1 1-line team status bar shown between editor and help.
+	// nil when team mode is disabled.
+	teamBar *TeamBar
+
 	// Prompt history for up/down navigation through previous messages.
 	promptHistory struct {
 		messages []string
@@ -385,6 +389,10 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.progressBarEnabled = opts.Progress == nil || *opts.Progress
 	// enable transparent mode
 	ui.isTransparent = opts.TUI.Transparent != nil && *opts.TUI.Transparent
+	// M5-P1: team status bar (feature-gated)
+	if com.Config().Options.IsAgentTeamEnabled() {
+		ui.teamBar = NewTeamBar()
+	}
 
 	return ui
 }
@@ -407,6 +415,9 @@ func (m *UI) Init() tea.Cmd {
 	}
 	if m.com.IsHyper() {
 		cmds = append(cmds, m.fetchHyperCredits())
+	}
+	if m.teamBar != nil {
+		cmds = append(cmds, m.teamBar.Init())
 	}
 	return tea.Batch(cmds...)
 }
@@ -925,6 +936,13 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.todoSpinner, cmd = m.todoSpinner.Update(msg)
 			if cmd != nil {
 				m.renderPills()
+				cmds = append(cmds, cmd)
+			}
+		}
+
+	case TeamBarTickMsg:
+		if m.teamBar != nil {
+			if cmd := m.teamBar.Update(msg, m.com); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
@@ -2301,6 +2319,11 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	m.status.SetHideHelp(isOnboarding)
 	m.status.Draw(scr, layout.status)
 
+	// M5-P1: team status bar
+	if m.teamBar != nil && layout.teamBar.Dy() > 0 {
+		uv.NewStyledString(m.teamBar.View(layout.teamBar.Dx())).Draw(scr, layout.teamBar)
+	}
+
 	// Draw completions popup if open
 	if !isOnboarding && m.completionsOpen && m.completions.HasItems() {
 		w, h := m.completions.Size()
@@ -2769,9 +2792,21 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 		appRect.Max.X -= 1
 	}
 
+	// M5-P1: team status bar (1 line between editor and help)
+	var teamBarRect image.Rectangle
+	if m.teamBar != nil && m.hasSession() {
+		teamBarHeight := 1
+		teamBarRect = image.Rect(
+			appRect.Min.X, appRect.Max.Y-teamBarHeight,
+			appRect.Max.X, appRect.Max.Y,
+		)
+		appRect.Max.Y -= teamBarHeight
+	}
+
 	uiLayout := uiLayout{
-		area:   area,
-		status: helpRect,
+		area:    area,
+		status:  helpRect,
+		teamBar: teamBarRect,
 	}
 
 	// Handle different app states
@@ -2941,6 +2976,9 @@ type uiLayout struct {
 
 	// status is the area for the status view.
 	status uv.Rectangle
+
+	// teamBar is the area for the 1-line team status bar (M5-P1).
+	teamBar uv.Rectangle
 
 	// session details is the area for the session details overlay in compact mode.
 	sessionDetails uv.Rectangle
