@@ -35,6 +35,9 @@ func (s *stubTeamRunner) SpawnMember(ctx context.Context, teamID, name, role, ag
 }
 func (s *stubTeamRunner) StopMember(ctx context.Context, teamID, memberID string, mode StopMode) error { return nil }
 func (s *stubTeamRunner) CancelMemberTurn(ctx context.Context, req CancelMemberTurnRequest) error { return nil }
+func (s *stubTeamRunner) WakeMember(ctx context.Context, teamID, memberID string, source WakeSource) error {
+	return nil
+}
 func (s *stubTeamRunner) Status(ctx context.Context, teamID string) (TeamRuntimeStatus, error) {
 	return s.statusResult, nil
 }

@@ -244,7 +244,7 @@ type LeaderSendMessageParams struct {
 // messages to team members. Uses the same M4-04 SendMessage API as the member
 // variant, but team_id is a parameter (not captured) because the leader can
 // manage multiple teams.
-func NewLeaderSendMessageTool(svc Service) fantasy.AgentTool {
+func NewLeaderSendMessageTool(svc Service, runner TeamRunner) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		TeamSendMessageToolName + "_leader",
 		leaderSendMessageDesc,
@@ -284,6 +284,10 @@ func NewLeaderSendMessageTool(svc Service) fantasy.AgentTool {
 			})
 			if err != nil {
 				return newTextError(fmt.Sprintf("send failed: %s", err.Error())), nil
+			}
+			// Wake each recipient so they process the new message.
+			for _, rid := range recipientIDs {
+				_ = runner.WakeMember(ctx, params.TeamID, rid, WakeSourceMailbox)
 			}
 			recipientList := "none"
 			if len(recipientIDs) > 0 {
