@@ -145,6 +145,7 @@ type Service interface {
 	FinishRun(ctx context.Context, req FinishRunRequest) error
 	MarkRunTerminal(ctx context.Context, req MarkRunTerminalRequest) error
 	FindStaleRuns(ctx context.Context, cutoff time.Time) ([]TeamRun, error)
+	GetTeamCost(ctx context.Context, teamID string) (TeamCost, error)
 
 	SendMessage(ctx context.Context, req SendMessageRequest) ([]string, error)
 	GetUnreadMessages(ctx context.Context, memberID string, limit int) ([]MailboxMessage, error)
@@ -709,6 +710,40 @@ func (s *teamService) FindStaleRuns(ctx context.Context, cutoff time.Time) ([]Te
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 	return runs, nil
+}
+
+// GetTeamCost reads all runs for a team (via FindStaleRuns proxy with a
+// far-future cutoff as a "list all" workaround), converts them to UsageRecords,
+// aggregates by member, then rolls up into a TeamCost. Same read pattern as
+// buildSnapshot/findRunsForSnapshot — no new store method required.
+// M4-12 Cost Accounting.
+func (s *teamService) GetTeamCost(ctx context.Context, teamID string) (TeamCost, error) {
+	if err := s.enabledGuard(); err != nil {
+		return TeamCost{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TeamCost{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	all, err := s.runs.FindStaleRuns(ctx, tx, now().Add(100*365*24*time.Hour))
+	if err != nil {
+		return TeamCost{}, err
+	}
+	// Filter to this team's runs only.
+	teamRuns := make([]TeamRun, 0)
+	for _, r := range all {
+		if r.TeamID == teamID {
+			teamRuns = append(teamRuns, r)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return TeamCost{}, fmt.Errorf("commit: %w", err)
+	}
+
+	members := AggregateByMember(teamRuns)
+	return AggregateTeamCost(teamID, members), nil
 }
 
 // --- event + snapshot + debug methods ---
