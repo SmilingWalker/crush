@@ -131,5 +131,11 @@ func (w *AppWorkspace) ListEventsAfter(ctx context.Context, workspaceID, teamID 
 	return out, nil
 }
 
+// TeamRunner returns the TeamRunner instance backing this workspace, or nil
+// if the app was created via NewForTest.
+func (w *AppWorkspace) TeamRunner() team.TeamRunner {
+	return w.app.TeamRunner()
+}
+
 // Compile-time check that AppWorkspace implements TeamWorkspace (acceptance #1).
 var _ TeamWorkspace = (*AppWorkspace)(nil)

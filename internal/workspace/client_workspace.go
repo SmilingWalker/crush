@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/charmbracelet/crush/internal/session"
 	"github.com/charmbracelet/crush/internal/skills"
+	"github.com/charmbracelet/crush/internal/team"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
@@ -627,6 +628,12 @@ func (w *ClientWorkspace) consumeEvents(evc <-chan any, send func(tea.Msg)) {
 			send(translated)
 		}
 	}
+}
+
+// TeamRunner returns nil for client/server mode — team mode is not supported
+// over the wire yet.
+func (w *ClientWorkspace) TeamRunner() team.TeamRunner {
+	return nil
 }
 
 func (w *ClientWorkspace) Shutdown() {
