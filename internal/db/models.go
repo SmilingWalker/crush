@@ -184,3 +184,10 @@ type TeamMessageReceipt struct {
 	DeliveredAt sql.NullInt64 `json:"delivered_at"`
 	ReadAt      sql.NullInt64 `json:"read_at"`
 }
+
+type TeamTaskDependency struct {
+	TaskID          string `json:"task_id"`
+	DependsOnTaskID string `json:"depends_on_task_id"`
+	TeamID          string `json:"team_id"`
+	CreatedAt       int64  `json:"created_at"`
+}

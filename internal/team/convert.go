@@ -227,3 +227,12 @@ func toMessageReceipt(r db.TeamMessageReceipt) MessageReceipt {
 		ReadAt:      nullInt64ToTimePtr(r.ReadAt),
 	}
 }
+
+func toTeamTaskDependency(r db.TeamTaskDependency) TeamTaskDependency {
+	return TeamTaskDependency{
+		TaskID:          r.TaskID,
+		DependsOnTaskID: r.DependsOnTaskID,
+		TeamID:          r.TeamID,
+		CreatedAt:       time.UnixMilli(r.CreatedAt),
+	}
+}

@@ -147,3 +147,22 @@ WHERE message_id = ? AND to_member_id = ?;
 UPDATE team_message_receipts
 SET read_at = ?
 WHERE message_id = ? AND to_member_id = ?;
+
+-- M4-11: Task dependency queries
+
+-- name: AddDependency :exec
+INSERT INTO team_task_dependencies (task_id, depends_on_task_id, team_id, created_at)
+VALUES (?, ?, ?, ?);
+
+-- name: RemoveDependency :exec
+DELETE FROM team_task_dependencies
+WHERE task_id = ? AND depends_on_task_id = ?;
+
+-- name: GetDependencies :many
+SELECT * FROM team_task_dependencies WHERE task_id = ? ORDER BY created_at ASC;
+
+-- name: GetDependents :many
+SELECT * FROM team_task_dependencies WHERE depends_on_task_id = ? ORDER BY created_at ASC;
+
+-- name: GetTeamDependencies :many
+SELECT * FROM team_task_dependencies WHERE team_id = ? ORDER BY created_at ASC;

@@ -893,3 +893,128 @@ func (q *Queries) MarkRead(ctx context.Context, arg MarkReadParams) error {
 	)
 	return err
 }
+
+// M4-11: Task dependency queries
+
+const addDependency = `-- name: AddDependency :exec
+INSERT INTO team_task_dependencies (task_id, depends_on_task_id, team_id, created_at)
+VALUES (?, ?, ?, ?)
+`
+
+type AddDependencyParams struct {
+	TaskID          string `json:"task_id"`
+	DependsOnTaskID string `json:"depends_on_task_id"`
+	TeamID          string `json:"team_id"`
+	CreatedAt       int64  `json:"created_at"`
+}
+
+func (q *Queries) AddDependency(ctx context.Context, arg AddDependencyParams) error {
+	_, err := q.exec(ctx, q.addDependencyStmt, addDependency,
+		arg.TaskID, arg.DependsOnTaskID, arg.TeamID, arg.CreatedAt,
+	)
+	return err
+}
+
+const removeDependency = `-- name: RemoveDependency :exec
+DELETE FROM team_task_dependencies
+WHERE task_id = ? AND depends_on_task_id = ?
+`
+
+type RemoveDependencyParams struct {
+	TaskID          string `json:"task_id"`
+	DependsOnTaskID string `json:"depends_on_task_id"`
+}
+
+func (q *Queries) RemoveDependency(ctx context.Context, arg RemoveDependencyParams) error {
+	_, err := q.exec(ctx, q.removeDependencyStmt, removeDependency,
+		arg.TaskID, arg.DependsOnTaskID,
+	)
+	return err
+}
+
+const getDependencies = `-- name: GetDependencies :many
+SELECT task_id, depends_on_task_id, team_id, created_at FROM team_task_dependencies WHERE task_id = ? ORDER BY created_at ASC
+`
+
+func (q *Queries) GetDependencies(ctx context.Context, taskID string) ([]TeamTaskDependency, error) {
+	rows, err := q.query(ctx, q.getDependenciesStmt, getDependencies, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TeamTaskDependency{}
+	for rows.Next() {
+		var i TeamTaskDependency
+		if err := rows.Scan(
+			&i.TaskID, &i.DependsOnTaskID, &i.TeamID, &i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getDependents = `-- name: GetDependents :many
+SELECT task_id, depends_on_task_id, team_id, created_at FROM team_task_dependencies WHERE depends_on_task_id = ? ORDER BY created_at ASC
+`
+
+func (q *Queries) GetDependents(ctx context.Context, dependsOnTaskID string) ([]TeamTaskDependency, error) {
+	rows, err := q.query(ctx, q.getDependentsStmt, getDependents, dependsOnTaskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TeamTaskDependency{}
+	for rows.Next() {
+		var i TeamTaskDependency
+		if err := rows.Scan(
+			&i.TaskID, &i.DependsOnTaskID, &i.TeamID, &i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTeamDependencies = `-- name: GetTeamDependencies :many
+SELECT task_id, depends_on_task_id, team_id, created_at FROM team_task_dependencies WHERE team_id = ? ORDER BY created_at ASC
+`
+
+func (q *Queries) GetTeamDependencies(ctx context.Context, teamID string) ([]TeamTaskDependency, error) {
+	rows, err := q.query(ctx, q.getTeamDependenciesStmt, getTeamDependencies, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TeamTaskDependency{}
+	for rows.Next() {
+		var i TeamTaskDependency
+		if err := rows.Scan(
+			&i.TaskID, &i.DependsOnTaskID, &i.TeamID, &i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

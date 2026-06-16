@@ -131,7 +131,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		conn,
 		team.NewTeamStore(q), team.NewMemberStore(q), team.NewTaskStore(q),
 		team.NewRunStore(q), team.NewEventStore(q), team.NewAuditStore(q),
-		team.NewMailboxStore(q),
+		team.NewMailboxStore(q), team.NewDependencyStore(q),
 		team.WithEnabledGate(func() bool { return cfg.Options.IsAgentTeamEnabled() }),
 	)
 

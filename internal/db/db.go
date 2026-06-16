@@ -222,6 +222,21 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.markReadStmt, err = db.PrepareContext(ctx, markRead); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkRead: %w", err)
 	}
+	if q.addDependencyStmt, err = db.PrepareContext(ctx, addDependency); err != nil {
+		return nil, fmt.Errorf("error preparing query AddDependency: %w", err)
+	}
+	if q.removeDependencyStmt, err = db.PrepareContext(ctx, removeDependency); err != nil {
+		return nil, fmt.Errorf("error preparing query RemoveDependency: %w", err)
+	}
+	if q.getDependenciesStmt, err = db.PrepareContext(ctx, getDependencies); err != nil {
+		return nil, fmt.Errorf("error preparing query GetDependencies: %w", err)
+	}
+	if q.getDependentsStmt, err = db.PrepareContext(ctx, getDependents); err != nil {
+		return nil, fmt.Errorf("error preparing query GetDependents: %w", err)
+	}
+	if q.getTeamDependenciesStmt, err = db.PrepareContext(ctx, getTeamDependencies); err != nil {
+		return nil, fmt.Errorf("error preparing query GetTeamDependencies: %w", err)
+	}
 	return &q, nil
 }
 
@@ -557,6 +572,31 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing markReadStmt: %w", cerr)
 		}
 	}
+	if q.addDependencyStmt != nil {
+		if cerr := q.addDependencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addDependencyStmt: %w", cerr)
+		}
+	}
+	if q.removeDependencyStmt != nil {
+		if cerr := q.removeDependencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing removeDependencyStmt: %w", cerr)
+		}
+	}
+	if q.getDependenciesStmt != nil {
+		if cerr := q.getDependenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getDependenciesStmt: %w", cerr)
+		}
+	}
+	if q.getDependentsStmt != nil {
+		if cerr := q.getDependentsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getDependentsStmt: %w", cerr)
+		}
+	}
+	if q.getTeamDependenciesStmt != nil {
+		if cerr := q.getTeamDependenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getTeamDependenciesStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -662,6 +702,11 @@ type Queries struct {
 	insertReceiptStmt              *sql.Stmt
 	markDeliveredStmt              *sql.Stmt
 	markReadStmt                   *sql.Stmt
+	addDependencyStmt              *sql.Stmt
+	removeDependencyStmt           *sql.Stmt
+	getDependenciesStmt            *sql.Stmt
+	getDependentsStmt              *sql.Stmt
+	getTeamDependenciesStmt        *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -734,5 +779,10 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		insertReceiptStmt:              q.insertReceiptStmt,
 		markDeliveredStmt:              q.markDeliveredStmt,
 		markReadStmt:                   q.markReadStmt,
+		addDependencyStmt:              q.addDependencyStmt,
+		removeDependencyStmt:           q.removeDependencyStmt,
+		getDependenciesStmt:            q.getDependenciesStmt,
+		getDependentsStmt:              q.getDependentsStmt,
+		getTeamDependenciesStmt:        q.getTeamDependenciesStmt,
 	}
 }

@@ -149,6 +149,11 @@ type Service interface {
 	SendMessage(ctx context.Context, req SendMessageRequest) ([]string, error)
 	GetUnreadMessages(ctx context.Context, memberID string, limit int) ([]MailboxMessage, error)
 
+	AddDependency(ctx context.Context, taskID, dependsOnTaskID, teamID string) error
+	RemoveDependency(ctx context.Context, taskID, dependsOnTaskID string) error
+	OnTaskCompleted(ctx context.Context, teamID, completedTaskID string) ([]string, error)
+	GetTaskWithDeps(ctx context.Context, teamID, taskID string) (TeamTask, error)
+
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
 	DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
 }
@@ -164,6 +169,7 @@ type teamService struct {
 	events  EventStore
 	audits  AuditStore
 	mailbox MailboxStore
+	deps    DependencyStore
 	enabled func() bool
 }
 
@@ -176,9 +182,9 @@ func WithEnabledGate(fn func() bool) ServiceOption {
 	return func(s *teamService) { s.enabled = fn }
 }
 
-// NewService builds a Service over the given *sql.DB + 7 stores. The feature
+// NewService builds a Service over the given *sql.DB + 8 stores. The feature
 // gate defaults to disabled; pass WithEnabledGate to enable.
-func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStore, runs RunStore, events EventStore, audits AuditStore, mailbox MailboxStore, opts ...ServiceOption) Service {
+func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStore, runs RunStore, events EventStore, audits AuditStore, mailbox MailboxStore, deps DependencyStore, opts ...ServiceOption) Service {
 	s := &teamService{
 		db:      db,
 		teams:   teams,
@@ -188,6 +194,7 @@ func NewService(db *sql.DB, teams TeamStore, members MemberStore, tasks TaskStor
 		events:  events,
 		audits:  audits,
 		mailbox: mailbox,
+		deps:    deps,
 		enabled: func() bool { return false }, // safe default: disabled until wired
 	}
 	for _, opt := range opts {
@@ -550,6 +557,15 @@ func (s *teamService) UpdateTask(ctx context.Context, req UpdateTaskRequest) (Te
 	}
 	if err := tx.Commit(); err != nil {
 		return TeamTask{}, fmt.Errorf("commit: %w", err)
+	}
+	// M4-11 cascade wake: if the task transitioned to a terminal state
+	// (completed, failed, canceled), unblock dependent tasks. Done in a
+	// separate tx after the update commits — the cascade is best-effort;
+	// a failure here does NOT roll back the already-committed update.
+	if updated.Status == TaskCompleted || updated.Status == TaskFailed || updated.Status == TaskCanceled {
+		if _, err := s.OnTaskCompleted(ctx, req.TeamID, req.ID); err != nil {
+			return updated, fmt.Errorf("cascade wake after task terminal update: %w", err)
+		}
 	}
 	return updated, nil
 }
