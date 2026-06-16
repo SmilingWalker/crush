@@ -326,14 +326,20 @@ func (m *MemberRunner) handleWake(source WakeSource) {
 	m.transitionLocked(MemberIdle)
 }
 
+// DefaultMaxPromptBytes is the fallback prompt byte budget when AgentSpec
+// doesn't specify one. 200KB fits most model context windows with headroom.
+const DefaultMaxPromptBytes = 200_000
+
 // buildPrompt assembles the full prompt envelope via PromptBuilder (M4-05).
 // The m.svc satisfies the MailboxReader interface; current task is nil until
-// M4-06 (Member Tools) wires task claiming into the wake flow.
+// task claiming is wired into the wake flow.
 func (m *MemberRunner) buildPrompt(ctx context.Context, source WakeSource) (string, error) {
 	pb := NewPromptBuilder(m.ID, m.TeamID, m.Role, nil, m.svc)
-	// Set a generous byte budget: 200KB covers most model context windows.
-	// When 0 (no limit), all sections are included in full.
-	pb.SetMaxBytes(0)
+	maxBytes := m.Spec.MaxPromptBytes
+	if maxBytes == 0 {
+		maxBytes = DefaultMaxPromptBytes
+	}
+	pb.SetMaxBytes(maxBytes)
 	return pb.Build(ctx)
 }
 

@@ -115,6 +115,10 @@ type AgentSpec struct {
 	// 与 config.Agent.MaxTurns 语义一致。AgentSpec 是 BuildRunner 暴露的唯一 seam，
 	// 在 M2 DelegateRunner 需要 turn 预算前预先承载该字段。
 	MaxTurns int
+
+	// MaxPromptBytes 是 prompt envelope 的字节上限。零值 = 默认 200KB。
+	// M4-05 PromptBuilder 超过上限时按优先级截断低优先级 section。
+	MaxPromptBytes int
 }
 
 // AgentFactory 创建独立 SessionAgent 实例的工厂。
