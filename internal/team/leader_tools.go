@@ -35,6 +35,9 @@ var teamListDesc string
 //go:embed team_status.md
 var teamStatusDesc string
 
+//go:embed leader_send_message.md
+var leaderSendMessageDesc string
+
 const (
 	TeamCreateToolName      = "team_create"
 	TeamSpawnMemberToolName = "team_spawn_member"
@@ -68,12 +71,25 @@ func NewTeamCreateTool(svc Service, runner TeamRunner) fantasy.AgentTool {
 			if err != nil {
 				return newTextError(fmt.Sprintf("create team failed: %s", err.Error())), nil
 			}
+
+			// Auto-create a leader member record so the leader has a valid
+			// member ID for sending messages (FK constraint on from_member_id).
+			leader, lerr := svc.SpawnMember(ctx, SpawnMemberRequest{
+				TeamID:       snap.Team.ID,
+				Name:         "leader",
+				Role:         "leader",
+				AgentProfile: "{}",
+			})
+			if lerr != nil {
+				return newTextError(fmt.Sprintf("spawn leader member failed: %s", lerr.Error())), nil
+			}
+
 			if err := runner.StartTeam(ctx, snap.Team.ID); err != nil {
 				return newTextError(fmt.Sprintf("start team failed: %s", err.Error())), nil
 			}
 			return newTextResponse(
-				fmt.Sprintf("Team %q created (id=%s, status=%s). Use team_spawn_member to add members.",
-					params.Name, snap.Team.ID, snap.Team.Status),
+				fmt.Sprintf("Team %q created (id=%s, leader_member_id=%s, status=%s). Use team_spawn_member to add more members.",
+					params.Name, snap.Team.ID, leader.ID, snap.Team.Status),
 			), nil
 		},
 	)
@@ -215,6 +231,7 @@ func NewTeamStatusTool(runner TeamRunner) fantasy.AgentTool {
 // multiple teams and isn't a team member itself.
 type LeaderSendMessageParams struct {
 	TeamID        string `json:"team_id"`
+	FromMemberID  string `json:"from_member_id,omitempty"`
 	RecipientType string `json:"recipient_type"`
 	ToMemberID    string `json:"to_member_id,omitempty"`
 	ToRole        string `json:"to_role,omitempty"`
@@ -230,10 +247,13 @@ type LeaderSendMessageParams struct {
 func NewLeaderSendMessageTool(svc Service) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		TeamSendMessageToolName + "_leader",
-		teamSpawnMemberDesc, // reuse member send description
+		leaderSendMessageDesc,
 		func(ctx context.Context, params LeaderSendMessageParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if strings.TrimSpace(params.TeamID) == "" {
 				return newTextError("team_id is required"), nil
+			}
+			if strings.TrimSpace(params.FromMemberID) == "" {
+				return newTextError("from_member_id is required (use the leader_member_id from team_create)"), nil
 			}
 			kind := MessageKind(params.Kind)
 			if !kind.Valid() {
@@ -254,7 +274,7 @@ func NewLeaderSendMessageTool(svc Service) fantasy.AgentTool {
 			}
 			recipientIDs, err := svc.SendMessage(ctx, SendMessageRequest{
 				TeamID:        params.TeamID,
-				FromMemberID:  "leader",
+				FromMemberID:  params.FromMemberID,
 				RecipientType: recipientType,
 				ToMemberID:    params.ToMemberID,
 				ToRole:        params.ToRole,

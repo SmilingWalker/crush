@@ -1,3 +1,7 @@
-Create a new agent team with the given name. A team is a group of AI agents (members) that collaborate on tasks. After creating a team, use team_spawn_member to add members.
+Create a new agent team and a leader member. The leader member ID (returned as leader_member_id) is used as from_member_id when sending messages with team_send_message.
 
-The team is immediately started and ready for members. Use team_status to check progress and member states.
+Parameters:
+- name: team name (required)
+- description: optional description
+
+Returns: team_id, leader_member_id, status. Use team_spawn_member to add worker members.
