@@ -293,9 +293,11 @@ func (m *MemberRunner) handleWake(source WakeSource) {
 			if err := m.svc.LinkSessionToMember(m.ctx, m.TeamID, m.ID, sid); err != nil {
 				slog.Error("handleWake: LinkSessionToMember failed", "member_id", m.ID, "error", err)
 			}
+			if err := m.svc.UpdateMemberSession(m.ctx, m.TeamID, m.ID, sid); err != nil {
+				slog.Error("handleWake: UpdateMemberSession failed", "member_id", m.ID, "error", err)
+			}
 		}
 	}
-
 	// Start a run record in DB.
 	run, err := m.svc.StartRun(m.ctx, StartRunRequest{
 		TeamID:    m.TeamID,
