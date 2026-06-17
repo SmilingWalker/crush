@@ -87,6 +87,11 @@ func NewTeamCreateTool(svc Service, runner TeamRunner) fantasy.AgentTool {
 			if err := runner.StartTeam(ctx, snap.Team.ID); err != nil {
 				return newTextError(fmt.Sprintf("start team failed: %s", err.Error())), nil
 			}
+
+			// M5-P2: wake the leader so its session is auto-created immediately.
+			// Without this, leader's sessionID is empty until the first message,
+			// which makes TeamBar session switching unable to switch back to leader.
+			_ = runner.WakeMember(ctx, snap.Team.ID, leader.ID, WakeSourceExplicit)
 			return newTextResponse(
 				fmt.Sprintf("Team %q created (id=%s, leader_member_id=%s, status=%s). Use team_spawn_member to add more members.",
 					params.Name, snap.Team.ID, leader.ID, snap.Team.Status),

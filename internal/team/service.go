@@ -47,10 +47,11 @@ type TeamFilter struct {
 
 // SpawnMemberRequest creates a member in a team.
 type SpawnMemberRequest struct {
-	TeamID       string `json:"team_id"`
-	Name         string `json:"name"`
-	Role         string `json:"role"`
-	AgentProfile string `json:"agent_profile"`
+	TeamID       string  `json:"team_id"`
+	Name         string  `json:"name"`
+	Role         string  `json:"role"`
+	AgentProfile string  `json:"agent_profile"`
+	SessionID    *string `json:"session_id,omitempty"` // optional pre-assigned session (M5-P2)
 }
 
 // UpdateMemberStateRequest transitions a member's state via CAS.
@@ -403,7 +404,8 @@ func (s *teamService) SpawnMember(ctx context.Context, req SpawnMemberRequest) (
 	ts := now()
 	m, err := s.members.CreateMember(ctx, tx, TeamMember{
 		ID: uuid.New().String(), TeamID: req.TeamID, Name: req.Name, Role: req.Role,
-		AgentProfile: req.AgentProfile, Status: MemberCreated, CreatedAt: ts, UpdatedAt: ts,
+		AgentProfile: req.AgentProfile, SessionID: req.SessionID,
+		Status: MemberCreated, CreatedAt: ts, UpdatedAt: ts,
 	})
 	if err != nil {
 		return TeamMember{}, err

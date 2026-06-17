@@ -1,6 +1,6 @@
 # M5-P2: Session Switching — Design Spec
 
-> Date: 2026-06-17 | Status: draft | Scope: team bar navigation + session switching
+> Date: 2026-06-17 | Status: updated | Scope: team bar navigation + session switching
 
 ## Goal
 
@@ -18,83 +18,147 @@ Navigate between team members from the team bar and switch the chat view to any 
 │   ^^高亮                                              │
 └─────────────────────────────────────────────────────────┘
 
-  ↓ ↑   : 输入框 ↔ team bar（双向切换）
-          - 输入框空时 ↓ → 进入 team bar，leader 高亮
-          - team bar 中 ↑ → 回到输入框
-          - team bar 中 ↓ → 也回到输入框
-          - ↑ ↓ 对称，同一个行为
-
-  ← →   : 在 team bar 里切换选中成员
-          - focus 留在 bar 内
-          - 选中即切换 — 聊天区立即显示该 member 的会话
+  ↓      : 输入框空 + 历史到底 + 有 team → 进入 team bar，leader 高亮
+           （历史非空时 ↓ 走历史导航，历史到底后 ↓ 才进 bar）
+  ↓ ↑    : team bar 中 → 回到编辑器（双向对称）
+  ← →    : team bar 中 → 切换选中成员，焦点留在 bar 内
 ```
 
 **关键行为**：
 - 选中即切换 — 在 team bar 里选中某个 member 时，上方的聊天区域立即显示该 member 的会话
 - 高亮 = 当前正在看谁 — 始终有一个 member 高亮（默认 leader）
-- 焦点只有两层：输入框／team bar，`↑` `↓` 对称切换
+- 焦点只有两层：编辑器／team bar，`↑` `↓` 对称切换
+
+## Session 模型（核心约束）
+
+### Leader 的 session = 用户主 session
+
+Leader **就是用户自己**。用户正在聊天的当前 session 就是 leader 的 session。Leader 的 sessionID **始终有效**，不可能为空。
+
+`team_create` 创建 leader member 时，必须把当前 request 的 session ID 写入 leader member 的 `session_id` 字段。这样 `TeamRunner.Status()` → `MemberRuntimeState.SessionID` → leader 始终有有效 sessionID。
+
+### Member 的 session 可能为空
+
+非 leader member（spawn 出来的 teammate）的 session 在**首次被 wake** 时才由 `createSession` 自动创建。如果 member 从未被 wake（没有收到过消息），其 sessionID 为空。
+
+### 切换规则
+
+| 操作 | 目标 sessionID | 行为 |
+|---|---|---|
+| 进入 bar（↓） | leader = 用户主 session | loadSession(leaderSID) — 始终有效 |
+| 导航（← →）到有 session 的 member | 有效 sessionID | loadSession(sid)，替换聊天区 |
+| 导航（← →）到无 session 的 member | 空 sessionID | **不做任何事**，保持当前聊天区不变 |
+| 退出 bar（↑ ↓） | — | 聊天区保持在最后显示的 session，不切回 |
+
+### 致命约束：`m.session` 永远不能是空/无效 session
+
+如果把 `m.session` 设为一个空 session（ID=""），会导致：
+1. `hasSession()` → false
+2. `generateLayout()` 中 team bar 高度 = 0 → bar 消失
+3. focus 仍为 `uiFocusTeamBar` → 所有按键路由到不存在的 bar → 完全卡死
+
+**所以必须保证**：任何 session 切换操作，如果目标 sessionID 为空，**什么都不做**。
+
+## 交互路径
+
+### 路径 1：进入 Bar（↓）
+
+```
+用户按 ↓
+  → 输入框焦点 (uiFocusEditor)
+  → 输入框为空 (m.textarea.Value() == "")
+  → 历史已到底 (historyNext 返回 false)
+  → HasTeam() → true
+  → 进入 Bar：
+      m.focus = uiFocusTeamBar
+      bar.focused = true
+      bar.selectedIndex = 0
+      textarea.Blur()
+      loadSession(leaderSID)  // leader 始终有 session
+```
+
+HasTeam() 定义：`bar.status != nil && len(bar.status.memberNames) > 0`
+
+### 路径 2：Bar 内导航（← →）
+
+```
+用户按 ← 或 →
+  → handleKeyPressMsg → focus == uiFocusTeamBar
+  → bar.Update() → selectedIndex ± 1
+  → switchSessionCmd() → SessionSwitchMsg{sid}
+  → UI.Update:
+      if sid != "" → loadSession(sid)
+      if sid == "" → 什么都不做，保持当前聊天
+```
+
+`↑` `↓` 始终返回编辑器（focus=uiFocusEditor, bar.focused=false, textarea.Focus()），不受 status 是否为 nil 影响。
+
+### 路径 3：退出 Bar（↑ ↓）
+
+```
+用户按 ↑ 或 ↓
+  → bar.Update() → FocusEditorMsg
+  → UI.Update:
+      m.focus = uiFocusEditor
+      bar.focused = false
+      textarea.Focus()
+      // 聊天区保持最后选中 session，不回切
+```
 
 ## Data Changes
 
-### Leader member in team bar
+### `MemberRuntimeState` 增加 SessionID
 
-`team_create` 已经自动创建 leader member（M4.5b fix）。Team bar 需要显示它：
-- `🤖 demo │ leader(idle) ● coder(programmer) ◇ reviewer(idle) │ 3M 1A`
+```
+MemberRuntimeState {
+    State        MemberStatus
+    Role         string
+    SessionID    string   // NEW: for UI session switching
+    CurrentRunID string
+    ...
+}
+```
 
-### Session association
+Leader 的 SessionID = 用户主 session（由 `team_create` 写入）。
+Member 的 SessionID = auto-created on first wake（由 `MemberRunner` 设置），可能为空。
 
-每个 member 有一个 session ID（M4.5b auto-create）。切换到 member 时，需要：
-1. 加载该 member 的 session 历史消息
-2. 如果 member 的 session 还没创建过（首次选中），显示空会话
+### Leader member 创建时写入 sessionID
+
+`team_create` 工具创建 leader member 时需要获取当前 request 的 session ID，写入 `dbMember.SessionID`。这样 leader 的 session 始终有效。
 
 ## Component Changes
 
-### TeamBar → InteractiveTeamBar
+### TeamBar
 
-- 维护 `selectedIndex int` 当前选中位置
-- 维护 `focused bool` 是否处于导航模式
-- `View(width) string` → 渲染时高亮 selectedIndex
-- `Update(msg) tea.Cmd` → 处理 `←` `→` `↓` `Enter`
+- 新增 `HasTeam()` — 判断是否有缓存的 team（status != nil && members > 0）
+- 预缓存 key bindings：`keyLeft`, `keyRight`, `keyUpDown`
+- `↑` `↓` 在 status guard **之前**检查（无条件 escape）
+- `←` `→` 导航 → `switchSessionCmd()` → `SessionSwitchMsg`
+- `View()` 高亮选中 member（反转色）
 
 ### UI 焦点系统
 
-在 `UI` 层加一个 focus 枚举，三态：
-
-```go
-type uiFocus int
-const (
-    focusEditor   uiFocus = iota // 输入框（默认）
-    focusTeamBar                  // team bar 导航
-)
+三态：
+```
+uiFocusNone → uiFocusEditor → uiFocusMain → uiFocusTeamBar (新增)
 ```
 
-- `↓` 空输入 → `focusTeamBar`
-- `focusTeamBar` + `↓` → `focusEditor`
+- `handleHistoryDown`：历史到底 + HasTeam() → 进 bar，始终 loadSession(leader SID)
+- `handleKeyPressMsg`：focus == uiFocusTeamBar → 路由到 bar.Update()
+- `SessionSwitchMsg` handler：**仅当 sid != "" 时**调用 loadSession
+- `FocusEditorMsg` handler：恢复编辑器焦点
 
-### Session 切换
+### `loadSession`
 
-TeamBar 选中变化时，发送一个 `SessionSwitchMsg{SessionID: ...}`。UI 收到后：
-1. 保存当前 session 状态
-2. 加载目标 session 的历史消息
-3. 更新 chat view
-
-涉及 `session.Service` + `message.Service` 的查询。
-
-## Files
-
-| File | Action | Purpose |
-|---|---|---|
-| `internal/ui/model/team_bar.go` | REWRITE | 交互式导航组件 |
-| `internal/ui/model/ui.go` | MODIFY | 焦点系统 + 会话切换 |
-| `internal/ui/model/chat.go` | MODIFY | 支持切换 session 加载 |
+不改。空 sessionID 不应该走到 loadSession。调用方负责检查。
 
 ## Acceptance
 
-1. `↓` 空输入 → team bar leader 高亮
-2. `←` `→` 切换选中 member，聊天区立即切换会话
-3. `↓` 回到输入框
-4. Leader 始终在 team bar 中显示为第一个 member
-5. 新 member 无历史消息时不报错
+1. `↓` 空输入 + 历史到底 + 有 team → team bar leader 高亮，聊天区显示 leader 会话
+2. `←` `→` 切换选中 member → 有 session 就加载，无 session 保持当前
+3. `↑` `↓` 回到输入框，bar 焦点消失
+4. 无 team → `↓` 正常走历史/文本编辑，不卡死
+5. 无 session 的 member → `←` `→` 选中时不崩溃、不卡死
 6. `go build ./...` passes; existing tests pass
 
 ## Out of scope
