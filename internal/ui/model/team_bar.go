@@ -46,6 +46,12 @@ type TeamBar struct {
 	selectedIndex int    // index into status.memberNames, 0 = leader/first
 	focused       bool   // true when TeamBar is the active focus (receives keys)
 	teamID        string // cached team ID for refresh
+
+	// Pre-cached key bindings — creating key.NewBinding on every key press
+	// is wasteful and risks subtle matching differences across platforms.
+	keyLeft   key.Binding
+	keyRight  key.Binding
+	keyUpDown key.Binding
 }
 
 // TeamBarStatus is the cached display data for the team bar.
@@ -61,7 +67,11 @@ type TeamBarStatus struct {
 
 // NewTeamBar creates a TeamBar that polls the given workspace for team status.
 func NewTeamBar() *TeamBar {
-	tb := &TeamBar{}
+	tb := &TeamBar{
+		keyLeft:   key.NewBinding(key.WithKeys("left")),
+		keyRight:  key.NewBinding(key.WithKeys("right")),
+		keyUpDown: key.NewBinding(key.WithKeys("up", "down")),
+	}
 	tb.tickCmd = tb.tick()
 	return tb
 }
@@ -116,22 +126,26 @@ func (b *TeamBar) Update(msg tea.Msg, com *common.Common) tea.Cmd {
 		}
 		// ↑/↓ always return to editor, even without a team —
 		// otherwise the user gets stuck with no way out.
-		if key.Matches(msg, key.NewBinding(key.WithKeys("up", "down"))) {
+		if key.Matches(msg, b.keyUpDown) {
 			return func() tea.Msg { return FocusEditorMsg{} }
 		}
 		if b.status == nil || len(b.status.memberNames) == 0 {
 			return nil
 		}
+		// Clamp before navigation to handle stale index after refresh.
+		if b.selectedIndex >= len(b.status.memberNames) {
+			b.selectedIndex = len(b.status.memberNames) - 1
+		}
+		if b.selectedIndex < 0 {
+			b.selectedIndex = 0
+		}
 		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("left"))):
+		case key.Matches(msg, b.keyLeft):
 			if b.selectedIndex > 0 {
 				b.selectedIndex--
-				if b.selectedIndex >= len(b.status.memberNames) {
-					b.selectedIndex = len(b.status.memberNames) - 1
-				}
 				return b.switchSessionCmd()
 			}
-		case key.Matches(msg, key.NewBinding(key.WithKeys("right"))):
+		case key.Matches(msg, b.keyRight):
 			if b.selectedIndex < len(b.status.memberNames)-1 {
 				b.selectedIndex++
 				return b.switchSessionCmd()
