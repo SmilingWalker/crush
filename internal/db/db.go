@@ -186,6 +186,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateMemberCASStmt, err = db.PrepareContext(ctx, updateMemberCAS); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateMemberCAS: %w", err)
 	}
+	if q.updateMemberSessionStmt, err = db.PrepareContext(ctx, updateMemberSession); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateMemberSession: %w", err)
+	}
 	if q.insertTaskStmt, err = db.PrepareContext(ctx, insertTask); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertTask: %w", err)
 	}
@@ -506,6 +509,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateMemberCASStmt: %w", cerr)
 		}
 	}
+	if q.updateMemberSessionStmt != nil {
+		if cerr := q.updateMemberSessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateMemberSessionStmt: %w", cerr)
+		}
+	}
 	if q.insertTaskStmt != nil {
 		if cerr := q.insertTaskStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertTaskStmt: %w", cerr)
@@ -674,6 +682,7 @@ type Queries struct {
 	getMemberStmt                  *sql.Stmt
 	listMembersStmt                *sql.Stmt
 	updateMemberCASStmt            *sql.Stmt
+	updateMemberSessionStmt        *sql.Stmt
 	insertTaskStmt                 *sql.Stmt
 	getTaskStmt                    *sql.Stmt
 	listTasksStmt                  *sql.Stmt
@@ -754,6 +763,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getMemberStmt:                  q.getMemberStmt,
 		listMembersStmt:                q.listMembersStmt,
 		updateMemberCASStmt:            q.updateMemberCASStmt,
+		updateMemberSessionStmt:        q.updateMemberSessionStmt,
 		insertTaskStmt:                 q.insertTaskStmt,
 		getTaskStmt:                    q.getTaskStmt,
 		listTasksStmt:                  q.listTasksStmt,

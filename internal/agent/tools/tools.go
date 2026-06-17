@@ -62,11 +62,11 @@ func GetModelNameFromContext(ctx context.Context) string {
 }
 
 // NewPermissionDeniedResponse returns a tool response indicating the user
-// denied permission, with StopTurn set so the agent loop does not retry.
+// denied permission. StopTurn is intentionally NOT set — the model can see
+// the denial text and try alternatives. Repeated identical tool calls are
+// caught by fantasy's hasRepeatedToolCalls detector.
 func NewPermissionDeniedResponse() fantasy.ToolResponse {
-	resp := fantasy.NewTextErrorResponse("User denied permission")
-	resp.StopTurn = true
-	return resp
+	return fantasy.NewTextErrorResponse("User denied permission")
 }
 
 // ghAvailable indicates whether the `gh` CLI is available on PATH.

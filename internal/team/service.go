@@ -157,6 +157,7 @@ type Service interface {
 		GetTaskWithDeps(ctx context.Context, teamID, taskID string) (TeamTask, error)
 		RecoverMemberSession(ctx context.Context, teamID, memberID string) (string, error)
 		LinkSessionToMember(ctx context.Context, teamID, memberID, sessionID string) error
+		UpdateMemberSession(ctx context.Context, teamID, memberID, sessionID string) error
 
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
 	DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
@@ -811,6 +812,27 @@ func (s *teamService) LinkSessionToMember(ctx context.Context, teamID, memberID,
 	})
 	if err != nil {
 		return fmt.Errorf("create session link: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// UpdateMemberSession writes the session_id directly to the member row in
+// team_members so it survives restarts. Called after the first wake creates a
+// session in handleWake.
+func (s *teamService) UpdateMemberSession(ctx context.Context, teamID, memberID, sessionID string) error {
+	if err := s.enabledGuard(); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := s.members.UpdateMemberSession(ctx, tx, teamID, memberID, sessionID); err != nil {
+		return fmt.Errorf("update member session: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)

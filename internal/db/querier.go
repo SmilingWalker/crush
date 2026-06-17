@@ -64,6 +64,7 @@ type Querier interface {
 	GetMember(ctx context.Context, id string) (TeamMember, error)
 	ListMembers(ctx context.Context, teamID string) ([]TeamMember, error)
 	UpdateMemberCAS(ctx context.Context, arg UpdateMemberCASParams) (TeamMember, error)
+	UpdateMemberSession(ctx context.Context, arg UpdateMemberSessionParams) error
 	InsertTask(ctx context.Context, arg InsertTaskParams) (TeamTask, error)
 	GetTask(ctx context.Context, arg GetTaskParams) (TeamTask, error)
 	ListTasks(ctx context.Context, teamID string) ([]TeamTask, error)
