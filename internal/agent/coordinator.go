@@ -569,8 +569,8 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	for _, tool := range allTools {
 		toolName := tool.Info().Name
 
-		// Layer 1: agent whitelist (existing behavior).
-		if !slices.Contains(agent.AllowedTools, toolName) {
+		// Layer 1: agent whitelist. nil or empty = allow all tools.
+		if len(agent.AllowedTools) > 0 && !slices.Contains(agent.AllowedTools, toolName) {
 			continue
 		}
 
