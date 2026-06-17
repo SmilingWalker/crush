@@ -288,6 +288,12 @@ func (m *MemberRunner) handleWake(source WakeSource) {
 		m.mu.Lock()
 		m.sessionID = sid
 		m.mu.Unlock()
+		// Persist the session link so the session can be recovered on restart.
+		if m.svc != nil {
+			if err := m.svc.LinkSessionToMember(m.ctx, m.TeamID, m.ID, sid); err != nil {
+				slog.Error("handleWake: LinkSessionToMember failed", "member_id", m.ID, "error", err)
+			}
+		}
 	}
 
 	// Start a run record in DB.

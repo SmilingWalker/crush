@@ -156,6 +156,7 @@ type Service interface {
 		OnTaskCompleted(ctx context.Context, teamID, completedTaskID string) ([]string, error)
 		GetTaskWithDeps(ctx context.Context, teamID, taskID string) (TeamTask, error)
 		RecoverMemberSession(ctx context.Context, teamID, memberID string) (string, error)
+		LinkSessionToMember(ctx context.Context, teamID, memberID, sessionID string) error
 
 	ListEventsAfter(ctx context.Context, teamID string, afterSeq int64, limit int) ([]TeamEvent, error)
 	DebugSnapshot(ctx context.Context, teamID string) (DebugSnapshot, error)
@@ -785,6 +786,36 @@ func (s *teamService) RecoverMemberSession(ctx context.Context, teamID, memberID
 		return "", fmt.Errorf("commit: %w", err)
 	}
 	return link.SessionID, nil
+}
+
+// LinkSessionToMember creates a session link so the member's session can be
+// recovered on restart via RecoverMemberSession. Called after the first wake
+// auto-creates a session in handleWake.
+func (s *teamService) LinkSessionToMember(ctx context.Context, teamID, memberID, sessionID string) error {
+	if err := s.enabledGuard(); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now()
+	_, err = s.links.CreateSessionLink(ctx, tx, TeamSessionLink{
+		ID:        uuid.New().String(),
+		TeamID:    teamID,
+		MemberID:  memberID,
+		SessionID: sessionID,
+		LinkType:  "member",
+		LinkedAt:  now,
+	})
+	if err != nil {
+		return fmt.Errorf("create session link: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // --- event + snapshot + debug methods ---
