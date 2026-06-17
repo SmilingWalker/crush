@@ -249,8 +249,9 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 		return true, nil
 	}
 
-	// Create a permission request for UI approval.
-	reqID := fmt.Sprintf("perm-%d", time.Now().UnixNano())
+	// Use ToolCallID as the request ID so the UI can reference it when
+	// calling ResolveRequest.
+	reqID := opts.ToolCallID
 	req := &PermissionRequest{
 		ID: reqID, TeamID: ac.TeamID, MemberID: ac.MemberID,
 		SessionID: opts.SessionID, Status: "pending", RequestedScope: "call",
@@ -266,6 +267,19 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 		return false, nil
 	}
 
+	// Publish a permission.PermissionRequest to the inner broker so the
+	// UI subscription sees it and shows the permission dialog.
+	b.inner.Publish(pubsub.CreatedEvent, permission.PermissionRequest{
+		ID:          reqID,
+		SessionID:   opts.SessionID,
+		ToolCallID:  opts.ToolCallID,
+		ToolName:    opts.ToolName,
+		Description: opts.Description,
+		Action:      opts.Action,
+		Params:      opts.Params,
+		Path:        opts.Path,
+	})
+
 	// Wait for UI decision via channel.
 	ch := make(chan bool, 1)
 	b.pendingMu.Lock()
@@ -280,6 +294,14 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 	select {
 	case allowed := <-ch:
 		return allowed, nil
+	case <-ctx.Done():
+		// Clean up the pending request entry to prevent channel leak.
+		b.pendingMu.Lock()
+		delete(b.pendingRequests, reqID)
+		b.pendingMu.Unlock()
+		req.Status = "canceled"
+		_ = b.store.UpdateRequest(ctx, req)
+		return false, ctx.Err()
 	case <-time.After(5 * time.Minute):
 		// Clean up the pending request entry to prevent channel leak.
 		b.pendingMu.Lock()
