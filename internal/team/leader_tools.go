@@ -140,6 +140,10 @@ func NewTeamSpawnMemberTool(svc Service, runner TeamRunner) fantasy.AgentTool {
 				ModelType:      modelType,
 				PermissionMode: permMode,
 				MaxPromptBytes: DefaultMaxPromptBytes,
+				ToolPolicy: agent.ToolPolicyProfile{
+					AllowedTools: nil, // nil = all built-in tools (bash, read, write, edit, grep, glob, etc.)
+				},
+				MaxTurns: 50,
 			}
 			dbMember, err := runner.SpawnMember(ctx, params.TeamID, params.Name, params.Role, "{}", spec)
 			if err != nil {
