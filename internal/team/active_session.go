@@ -9,11 +9,12 @@ package team
 import "sync"
 
 // ActiveSessionTracker is a concurrency-safe holder for the currently active
-// session ID in the TUI. It is updated on session switch and read by
-// PermissionBridge when a team member requests tool permission.
+// session and member in the TUI. PermissionBridge uses this to decide whether
+// to pop up a permission dialog for team member tool calls.
 type ActiveSessionTracker struct {
 	mu        sync.RWMutex
 	sessionID string
+	memberID  string // set when switching to a member whose session may not exist yet
 }
 
 // NewActiveSessionTracker returns an empty tracker.
@@ -21,16 +22,25 @@ func NewActiveSessionTracker() *ActiveSessionTracker {
 	return &ActiveSessionTracker{}
 }
 
-// Set updates the active session ID.
-func (t *ActiveSessionTracker) Set(sid string) {
+// SetSession updates the active session ID.
+func (t *ActiveSessionTracker) SetSession(sid, mid string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.sessionID = sid
+	t.memberID = mid
 }
 
-// Get returns the currently active session ID, or "" if none.
-func (t *ActiveSessionTracker) Get() string {
+// IsActiveSession returns true if the given session or member matches the
+// currently active view. Member ID matching handles the case where the user
+// switched to a member whose session hasn't been created yet (first wake).
+func (t *ActiveSessionTracker) IsActiveSession(sessionID, memberID string) bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.sessionID
+	if t.sessionID != "" && t.sessionID == sessionID {
+		return true
+	}
+	if t.memberID != "" && t.memberID == memberID {
+		return true
+	}
+	return false
 }

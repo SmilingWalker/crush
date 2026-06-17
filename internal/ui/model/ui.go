@@ -958,7 +958,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// M5.2: Notify the permission bridge which session the user is viewing.
 		if m.com != nil && m.com.ActiveSessionTracker != nil {
-			m.com.ActiveSessionTracker.Set(msg.SessionID)
+			m.com.ActiveSessionTracker.SetSession(msg.SessionID, msg.MemberID)
 		}
 
 	case FocusEditorMsg:

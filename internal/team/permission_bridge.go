@@ -258,13 +258,8 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 		return true, nil
 	}
 
-	// Team session — check active session.
-	activeSID := ""
-	if b.tracker != nil {
-		activeSID = b.tracker.Get()
-	}
-	if activeSID != "" && activeSID == opts.SessionID {
-		// User is viewing this member's session — show permission dialog.
+	// Team session — check if user is viewing this member (by session ID or member ID).
+	if b.tracker != nil && b.tracker.IsActiveSession(opts.SessionID, ac.MemberID) {
 		return b.requestWithUI(ctx, opts, ac)
 	}
 

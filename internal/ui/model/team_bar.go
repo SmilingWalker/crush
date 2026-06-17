@@ -30,6 +30,7 @@ type TeamBarTickMsg struct{}
 // session. Emitted by TeamBar when the user presses Enter on a member.
 type SessionSwitchMsg struct {
 	SessionID string
+	MemberID  string // may be empty (e.g. leader session); used by ActiveSessionTracker
 }
 
 // FocusEditorMsg requests the UI to move focus back to the editor.
@@ -57,10 +58,11 @@ type TeamBar struct {
 // TeamBarStatus is the cached display data for the team bar.
 type TeamBarStatus struct {
 	teamName     string
-	memberNames  []string // sorted for stable display
+	memberNames  []string // sorted for stable display (actually member IDs from runtime)
 	memberIcons  []string
 	memberRoles  []string
 	sessionIDs   []string // per-member session ID for session switching (M5-P2)
+	memberIDs    []string // per-member member ID (M5.2: for ActiveSessionTracker matching)
 	activeRuns   int
 	totalMembers int
 }
@@ -163,9 +165,21 @@ func (b *TeamBar) Update(msg tea.Msg, com *common.Common) tea.Cmd {
 // currently selected member's session ID.
 func (b *TeamBar) switchSessionCmd() tea.Cmd {
 	sid := b.SelectedSessionID()
+	mid := b.SelectedMemberID()
 	return func() tea.Msg {
-		return SessionSwitchMsg{SessionID: sid}
+		return SessionSwitchMsg{SessionID: sid, MemberID: mid}
 	}
+}
+
+// SelectedMemberID returns the member ID of the currently selected member, or "" if none.
+func (b *TeamBar) SelectedMemberID() string {
+	if b.status == nil || len(b.status.memberIDs) == 0 {
+		return ""
+	}
+	if b.selectedIndex < 0 || b.selectedIndex >= len(b.status.memberIDs) {
+		return ""
+	}
+	return b.status.memberIDs[b.selectedIndex]
 }
 
 // View renders the 1-line team status bar with the selected member highlighted.
@@ -264,6 +278,7 @@ func (b *TeamBar) refresh(com *common.Common) {
 		memberIcons:  make([]string, 0, len(names)),
 		memberRoles:  make([]string, 0, len(names)),
 		sessionIDs:   make([]string, 0, len(names)),
+		memberIDs:    make([]string, 0, len(names)), // M5.2
 		activeRuns:   runtimeStatus.ActiveRuns,
 		totalMembers: len(runtimeStatus.Members),
 	}
@@ -275,6 +290,7 @@ func (b *TeamBar) refresh(com *common.Common) {
 		ts.memberIcons = append(ts.memberIcons, icon)
 		ts.memberRoles = append(ts.memberRoles, m.Role)
 		ts.sessionIDs = append(ts.sessionIDs, m.SessionID)
+		ts.memberIDs = append(ts.memberIDs, name) // name is actually member ID
 	}
 
 	if b.selectedIndex >= len(names) {
