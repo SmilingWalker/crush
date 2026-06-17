@@ -101,6 +101,7 @@ const (
 	uiFocusNone uiFocusState = iota
 	uiFocusEditor
 	uiFocusMain
+	uiFocusTeamBar // M5-P2: team bar navigation
 )
 
 type uiState uint8
@@ -946,6 +947,21 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
+
+	case SessionSwitchMsg:
+		// M5-P2: team bar navigation switched to a different member.
+		// Load the target session's messages into the chat view.
+		if msg.SessionID != "" {
+			cmds = append(cmds, m.loadSession(msg.SessionID))
+		}
+
+	case FocusEditorMsg:
+		// M5-P2: ↑ or ↓ pressed in team bar → return focus to editor.
+		m.focus = uiFocusEditor
+		if m.teamBar != nil {
+			m.teamBar.SetFocused(false)
+		}
+		cmds = append(cmds, m.textarea.Focus())
 
 	case tea.KeyPressMsg:
 		if cmd := m.handleKeyPressMsg(msg); cmd != nil {
@@ -1860,6 +1876,14 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 
+	// Delegate key events to the team bar if it has focus (M5-P2).
+	if m.focus == uiFocusTeamBar && m.teamBar != nil {
+		if cmd := m.teamBar.Update(msg, m.com); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return tea.Batch(cmds...)
+	}
+
 	handleGlobalKeys := func(msg tea.KeyPressMsg) bool {
 		switch {
 		case key.Matches(msg, m.keyMap.Help):
@@ -2086,6 +2110,18 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if cmd := m.openCommandsDialog(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
+			case m.teamBar != nil && m.com.Config().Options.IsAgentTeamEnabled() &&
+				key.Matches(msg, key.NewBinding(key.WithKeys("down"))) &&
+				m.textarea.Value() == "":
+				// M5-P2: ↓ on empty input → enter team bar navigation
+				m.focus = uiFocusTeamBar
+				m.teamBar.SetFocused(true)
+				m.teamBar.SelectFirst()
+				// Switch to leader's session on entry
+				if sid := m.teamBar.SelectedSessionID(); sid != "" {
+					cmds = append(cmds, m.loadSession(sid))
+				}
+				m.textarea.Blur()
 			default:
 				if handleGlobalKeys(msg) {
 					// Handle global keys first before passing to textarea.
