@@ -150,6 +150,7 @@ func (m *MemberRunner) Status() MemberRuntimeState {
 	return MemberRuntimeState{
 		State:        m.State,
 		Role:         m.Role,
+		SessionID:    m.sessionID,
 		CurrentRunID: m.currentRunID,
 	}
 }

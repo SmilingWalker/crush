@@ -52,6 +52,7 @@ type TeamRuntimeStatus struct {
 type MemberRuntimeState struct {
 	State        MemberStatus
 	Role         string
+	SessionID    string // member's session for UI session switching (M5-P2)
 	CurrentRunID string
 	CurrentTask  string
 	CurrentTool  string
