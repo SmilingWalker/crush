@@ -17,6 +17,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"charm.land/fantasy"
@@ -293,7 +294,9 @@ func NewLeaderSendMessageTool(svc Service, runner TeamRunner) fantasy.AgentTool 
 			}
 			// Wake each recipient so they process the new message.
 			for _, rid := range recipientIDs {
-				_ = runner.WakeMember(ctx, params.TeamID, rid, WakeSourceMailbox)
+				if err := runner.WakeMember(ctx, params.TeamID, rid, WakeSourceMailbox); err != nil {
+					slog.Warn("failed to wake member after send", "member_id", rid, "error", err)
+				}
 			}
 			recipientList := "none"
 			if len(recipientIDs) > 0 {

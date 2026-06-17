@@ -13,7 +13,7 @@ type PermissionQueue struct {
 	defaultTTL time.Duration
 	fsm        *PermissionFSM
 	pending    map[string]*time.Timer // requestID -> expiry timer
-	mu         sync.Mutex
+	mu         sync.RWMutex
 }
 
 // NewPermissionQueue creates a queue with defaults (max 3 pending, 5 min TTL).
@@ -60,15 +60,20 @@ func (q *PermissionQueue) Dequeue(reqID string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if timer, ok := q.pending[reqID]; ok {
-		timer.Stop()
+		if !timer.Stop() {
+			// Timer already fired — its AfterFunc goroutine is either
+			// running or about to run Expire. Since Expire is idempotent
+			// (it checks Status != "pending"), we just skip the drain
+			// and let it finish naturally.
+		}
 		delete(q.pending, reqID)
 	}
 }
 
 // PendingCount returns the number of pending requests.
 func (q *PermissionQueue) PendingCount() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	q.mu.RLock()
+	defer q.mu.RUnlock()
 	return len(q.pending)
 }
 

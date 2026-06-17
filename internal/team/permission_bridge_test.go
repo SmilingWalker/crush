@@ -12,12 +12,12 @@ func TestGrantStore_FindActiveGrant(t *testing.T) {
 	gs := NewGrantStore()
 	ctx := context.Background()
 	err := gs.CreateGrant(ctx, &Grant{
-		ID: "g1", MemberID: "m1", ToolName: "bash", Action: "execute",
+		ID: "g1", MemberID: "m1", SessionID: "s1", ToolName: "bash", Action: "execute",
 		Scope: "call", ExpiresAt: time.Now().Add(1 * time.Hour),
 	})
 	assert.NoError(t, err)
 
-	grant, ok := gs.FindActiveGrant(ctx, "m1", "bash", "execute")
+	grant, ok := gs.FindActiveGrant(ctx, "s1", "bash", "execute")
 	assert.True(t, ok)
 	assert.Equal(t, "g1", grant.ID)
 }
@@ -26,12 +26,12 @@ func TestGrantStore_FindActiveGrant_Expired(t *testing.T) {
 	gs := NewGrantStore()
 	ctx := context.Background()
 	err := gs.CreateGrant(ctx, &Grant{
-		ID: "g2", MemberID: "m2", ToolName: "write", Action: "create",
+		ID: "g2", MemberID: "m2", SessionID: "s2", ToolName: "write", Action: "create",
 		Scope: "call", ExpiresAt: time.Now().Add(-1 * time.Hour),
 	})
 	assert.NoError(t, err)
 
-	_, ok := gs.FindActiveGrant(ctx, "m2", "write", "create")
+	_, ok := gs.FindActiveGrant(ctx, "s2", "write", "create")
 	assert.False(t, ok)
 }
 
@@ -39,12 +39,12 @@ func TestGrantStore_FindActiveGrant_NoMatch(t *testing.T) {
 	gs := NewGrantStore()
 	ctx := context.Background()
 	err := gs.CreateGrant(ctx, &Grant{
-		ID: "g3", MemberID: "m3", ToolName: "bash", Action: "execute",
+		ID: "g3", MemberID: "m3", SessionID: "s3", ToolName: "bash", Action: "execute",
 		Scope: "call", ExpiresAt: time.Now().Add(1 * time.Hour),
 	})
 	assert.NoError(t, err)
 
-	_, ok := gs.FindActiveGrant(ctx, "other-member", "bash", "execute")
+	_, ok := gs.FindActiveGrant(ctx, "other-session", "bash", "execute")
 	assert.False(t, ok)
 }
 

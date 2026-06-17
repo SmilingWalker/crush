@@ -130,12 +130,34 @@ func (fsm *PermissionFSM) Expire(ctx context.Context, requestID string) error {
 	return fsm.store.UpdateRequest(ctx, permReq)
 }
 
-// Cancel marks all pending requests for a run as canceled.
+// Cancel marks all pending requests for a run as canceled and emits an audit
+// event for each. Returns the count of canceled requests.
 func (fsm *PermissionFSM) Cancel(ctx context.Context, runID string) (int, error) {
-	cancelled := 0
-	// In-memory store iteration — just cancel all pending for now.
-	// DB-backed version will query by runID properly.
-	return cancelled, nil
+	requests := fsm.store.ListByRun(ctx, runID)
+	for _, req := range requests {
+		req.Status = "canceled"
+		_ = fsm.store.UpdateRequest(ctx, req)
+		fsm.auditFn(ctx, PermAuditEvent{
+			Action: PermAuditPermissionCanceled, TeamID: req.TeamID, MemberID: req.MemberID,
+			RunID: req.RunID, ToolName: req.ToolName, Timestamp: time.Now(),
+		})
+	}
+	return len(requests), nil
+}
+
+// Orphan marks all pending requests for a member as orphaned (used during
+// startup recovery). Returns the count of orphaned requests.
+func (fsm *PermissionFSM) Orphan(ctx context.Context, memberID string) (int, error) {
+	requests := fsm.store.ListPendingByMember(ctx, memberID)
+	for _, req := range requests {
+		req.Status = "orphaned"
+		_ = fsm.store.UpdateRequest(ctx, req)
+		fsm.auditFn(ctx, PermAuditEvent{
+			Action: PermAuditPermissionOrphaned, TeamID: req.TeamID, MemberID: req.MemberID,
+			RunID: req.RunID, ToolName: req.ToolName, Timestamp: time.Now(),
+		})
+	}
+	return len(requests), nil
 }
 
 // IsLateResponse checks if a run has terminated before the decision.

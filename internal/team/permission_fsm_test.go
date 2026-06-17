@@ -25,7 +25,7 @@ func TestFSM_Resolve_Allowed_CallScope(t *testing.T) {
 	fsm, ps, gs := setupFSM(t)
 	ctx := context.Background()
 	req := &PermissionRequest{
-		ID: "r1", TeamID: "t1", MemberID: "m1", RunID: "run1",
+		ID: "r1", TeamID: "t1", MemberID: "m1", SessionID: "s1", RunID: "run1",
 		ToolName: "bash", Action: "execute", ResourceRef: "/tmp/test",
 		Status: "pending", RequestedScope: "call", CreatedAt: time.Now(),
 	}
@@ -38,7 +38,7 @@ func TestFSM_Resolve_Allowed_CallScope(t *testing.T) {
 	assert.Equal(t, "allowed", got.Status)
 	assert.Equal(t, "call", got.DecisionScope)
 
-	grant, ok := gs.FindActiveGrant(ctx, "m1", "bash", "execute")
+	grant, ok := gs.FindActiveGrant(ctx, "s1", "bash", "execute")
 	assert.True(t, ok)
 	assert.Equal(t, "call", grant.Scope)
 }
