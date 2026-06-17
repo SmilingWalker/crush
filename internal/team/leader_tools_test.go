@@ -55,7 +55,7 @@ func TestTeamCreate_Success(t *testing.T) {
 	ctx := context.Background()
 	runner := &stubTeamRunner{}
 
-	tool := NewTeamCreateTool(svc, runner)
+	tool := NewTeamCreateTool(svc, runner, func() string { return "test-leader-session" })
 	input := marshalLeaderParams(t, map[string]string{
 		"name":        "my-team",
 		"description": "test",
@@ -70,7 +70,7 @@ func TestTeamCreate_Success(t *testing.T) {
 
 func TestTeamCreate_EmptyName(t *testing.T) {
 	svc, _ := newServiceFixture(t)
-	tool := NewTeamCreateTool(svc, &stubTeamRunner{})
+	tool := NewTeamCreateTool(svc, &stubTeamRunner{}, func() string { return "test-leader-session" })
 	input := marshalLeaderParams(t, map[string]string{
 		"name": "",
 	})

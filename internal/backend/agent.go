@@ -19,6 +19,7 @@ func (b *Backend) SendMessage(ctx context.Context, workspaceID string, msg proto
 		return ErrAgentNotInitialized
 	}
 
+	ws.SetCurrentSession(msg.SessionID)
 	_, err = ws.AgentCoordinator.Run(ctx, msg.SessionID, msg.Prompt, proto.AttachmentsToMessage(msg.Attachments)...)
 	return err
 }

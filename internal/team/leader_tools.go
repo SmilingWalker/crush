@@ -54,7 +54,7 @@ type TeamCreateParams struct {
 	Description string `json:"description,omitempty"`
 }
 
-func NewTeamCreateTool(svc Service, runner TeamRunner) fantasy.AgentTool {
+func NewTeamCreateTool(svc Service, runner TeamRunner, sessionID func() string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		TeamCreateToolName,
 		teamCreateDesc,
@@ -62,9 +62,10 @@ func NewTeamCreateTool(svc Service, runner TeamRunner) fantasy.AgentTool {
 			if strings.TrimSpace(params.Name) == "" {
 				return newTextError("name is required"), nil
 			}
+			leaderSID := sessionID()
 			snap, err := svc.CreateTeam(ctx, CreateTeamRequest{
 				WorkspaceID:     "default",
-				LeaderSessionID: "",
+				LeaderSessionID: leaderSID,
 				Name:            params.Name,
 				Description:     params.Description,
 			})
@@ -72,13 +73,14 @@ func NewTeamCreateTool(svc Service, runner TeamRunner) fantasy.AgentTool {
 				return newTextError(fmt.Sprintf("create team failed: %s", err.Error())), nil
 			}
 
-			// Auto-create a leader member record so the leader has a valid
-			// member ID for sending messages (FK constraint on from_member_id).
+			// M5-P2: leader member with user's main session.
+			// Leader = the user; its session is always valid for bar switching.
 			leader, lerr := svc.SpawnMember(ctx, SpawnMemberRequest{
 				TeamID:       snap.Team.ID,
 				Name:         "leader",
 				Role:         "leader",
 				AgentProfile: "{}",
+				SessionID:    &leaderSID,
 			})
 			if lerr != nil {
 				return newTextError(fmt.Sprintf("spawn leader member failed: %s", lerr.Error())), nil
@@ -87,11 +89,6 @@ func NewTeamCreateTool(svc Service, runner TeamRunner) fantasy.AgentTool {
 			if err := runner.StartTeam(ctx, snap.Team.ID); err != nil {
 				return newTextError(fmt.Sprintf("start team failed: %s", err.Error())), nil
 			}
-
-			// M5-P2: wake the leader so its session is auto-created immediately.
-			// Without this, leader's sessionID is empty until the first message,
-			// which makes TeamBar session switching unable to switch back to leader.
-			_ = runner.WakeMember(ctx, snap.Team.ID, leader.ID, WakeSourceExplicit)
 			return newTextResponse(
 				fmt.Sprintf("Team %q created (id=%s, leader_member_id=%s, status=%s). Use team_spawn_member to add more members.",
 					params.Name, snap.Team.ID, leader.ID, snap.Team.Status),

@@ -51,7 +51,7 @@ type SpawnMemberRequest struct {
 	Name         string  `json:"name"`
 	Role         string  `json:"role"`
 	AgentProfile string  `json:"agent_profile"`
-	SessionID    *string `json:"session_id,omitempty"` // optional pre-assigned session (M5-P2)
+	SessionID    *string `json:"session_id,omitempty"` // pre-assigned session (M5-P2)
 }
 
 // UpdateMemberStateRequest transitions a member's state via CAS.

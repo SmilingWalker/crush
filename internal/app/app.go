@@ -90,6 +90,14 @@ type App struct {
 	// stale-run recovery. Wired in New() alongside TeamRunner.
 	teamScheduler *team.Scheduler
 
+	// currentSessionID is set by agent run paths before tool execution.
+	// Used by team_create to write the leader member's session.
+	currentSessionID string
+
+	// SetCurrentSession records the active session ID before agent runs.
+	// Exported so workspace/backend packages can set it.
+	SetCurrentSession func(sessionID string)
+
 	serviceEventsWG *sync.WaitGroup
 	eventsCtx       context.Context
 	events          *pubsub.Broker[tea.Msg]
@@ -186,12 +194,14 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	})
 	app.teamScheduler = team.NewScheduler(app.team, team.DefaultSchedulerConfig())
 
+	app.SetCurrentSession = func(sid string) { app.currentSessionID = sid }
+
 	// M4.5: inject leader team tools into the coder agent when the feature
 	// gate is enabled. The model can then create teams and spawn members
 	// through normal chat conversation.
 	if cfg.Options.IsAgentTeamEnabled() {
 		app.AgentCoordinator.AppendTools([]fantasy.AgentTool{
-			team.NewTeamCreateTool(app.team, app.teamRunner),
+			team.NewTeamCreateTool(app.team, app.teamRunner, func() string { return app.currentSessionID }),
 			team.NewTeamSpawnMemberTool(app.team, app.teamRunner),
 			team.NewTeamListTool(app.team),
 			team.NewTeamStatusTool(app.teamRunner),
@@ -361,6 +371,7 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	}
 	done := make(chan response, 1)
 
+	app.SetCurrentSession(sess.ID)
 	go func(ctx context.Context, sessionID, prompt string) {
 		result, err := app.AgentCoordinator.Run(ctx, sess.ID, prompt)
 		if err != nil {
