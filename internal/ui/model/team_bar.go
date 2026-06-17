@@ -1,6 +1,7 @@
-// team_bar.go implements the M5-P1 team status bar — a 1-line component that
-// polls TeamRunner.Status every 2s and renders a compact team/member summary
-// at the bottom of the chat UI.
+// team_bar.go implements the M5 team status bar.
+//
+// M5-P1: read-only 1-line status display polling every 2s
+// M5-P2: interactive navigation — ← → select members, ↑ ↓ toggle focus
 //
 // Format:  🤖 teamName │ ● coder(programmer) ◇ reviewer(idle) │ 2M 1A
 // No team: 🤖 No active team
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/proto"
@@ -24,21 +26,37 @@ import (
 // TeamBarTickMsg is sent every 2s to trigger a status refresh.
 type TeamBarTickMsg struct{}
 
-// TeamBar is the M5-P1 team status bar component. It holds a cached
-// TeamRuntimeStatus (nil = no active team) and polls the workspace every 2s.
+// SessionSwitchMsg requests the UI to switch the chat view to a different
+// session. Emitted by TeamBar when the user navigates to a different member.
+type SessionSwitchMsg struct {
+	SessionID string
+}
+
+// FocusEditorMsg requests the UI to move focus back to the editor.
+// Emitted by TeamBar when the user presses ↑ or ↓ in the bar.
+type FocusEditorMsg struct{}
+
+// TeamBar is the interactive team status bar (M5-P1 + M5-P2).
+// It polls TeamRunner.Status every 2s and supports ← → ↑ ↓ navigation.
 type TeamBar struct {
-	status   *TeamBarStatus // nil = no active team
-	tickCmd  tea.Cmd
+	status  *TeamBarStatus // nil = no active team
+	tickCmd tea.Cmd
+
+	// M5-P2: navigation state
+	selectedIndex int    // index into status.memberNames, 0 = leader/first
+	focused       bool   // true when TeamBar is the active focus (receives keys)
+	teamID        string // cached team ID for refresh
 }
 
 // TeamBarStatus is the cached display data for the team bar.
 type TeamBarStatus struct {
-	teamName      string
-	memberNames   []string // sorted for stable display
-	memberIcons   []string
-	memberRoles   []string
-	activeRuns    int
-	totalMembers  int
+	teamName     string
+	memberNames  []string // sorted for stable display
+	memberIcons  []string
+	memberRoles  []string
+	sessionIDs   []string // per-member session ID for session switching (M5-P2)
+	activeRuns   int
+	totalMembers int
 }
 
 // NewTeamBar creates a TeamBar that polls the given workspace for team status.
@@ -48,26 +66,86 @@ func NewTeamBar() *TeamBar {
 	return tb
 }
 
-// Init starts the 2s polling tick. Returns nil so the caller can batch.
+// Init starts the 2s polling tick.
 func (b *TeamBar) Init() tea.Cmd {
 	return b.tickCmd
 }
 
-// Update handles tick messages and refreshes the cached status.
+// SetFocused sets the TeamBar focus state. When true, arrow keys navigate
+// members; when false, arrow keys are ignored.
+func (b *TeamBar) SetFocused(v bool) {
+	b.focused = v
+}
+
+// IsFocused reports whether the TeamBar currently has focus.
+func (b *TeamBar) IsFocused() bool {
+	return b.focused
+}
+
+// SelectedSessionID returns the session ID of the currently selected member,
+// or "" if no status or no members.
+func (b *TeamBar) SelectedSessionID() string {
+	if b.status == nil || len(b.status.sessionIDs) == 0 {
+		return ""
+	}
+	if b.selectedIndex < 0 || b.selectedIndex >= len(b.status.sessionIDs) {
+		return ""
+	}
+	return b.status.sessionIDs[b.selectedIndex]
+}
+
+// SelectFirst selects the first member (leader) if available.
+func (b *TeamBar) SelectFirst() {
+	if b.status != nil && len(b.status.memberNames) > 0 {
+		b.selectedIndex = 0
+	}
+}
+
+// Update handles tick messages and key navigation.
 func (b *TeamBar) Update(msg tea.Msg, com *common.Common) tea.Cmd {
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case TeamBarTickMsg:
 		if tr := com.Workspace.TeamRunner(); tr != nil {
 			b.refresh(com)
 		}
 		return b.tick()
+
+	case tea.KeyPressMsg:
+		if !b.focused || b.status == nil || len(b.status.memberNames) == 0 {
+			return nil
+		}
+		switch {
+		case key.Matches(msg, key.NewBinding(key.WithKeys("left"))):
+			if b.selectedIndex > 0 {
+				b.selectedIndex--
+				if b.selectedIndex >= len(b.status.memberNames) {
+					b.selectedIndex = len(b.status.memberNames) - 1
+				}
+				return b.switchSessionCmd()
+			}
+		case key.Matches(msg, key.NewBinding(key.WithKeys("right"))):
+			if b.selectedIndex < len(b.status.memberNames)-1 {
+				b.selectedIndex++
+				return b.switchSessionCmd()
+			}
+		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "down"))):
+			// ↑ and ↓ both return focus to editor (symmetric)
+			return func() tea.Msg { return FocusEditorMsg{} }
+		}
 	}
 	return nil
 }
 
-// View renders the 1-line team status bar.
-// Format:  🤖 teamName │ ● coder(programmer) ◇ reviewer(idle) │ 2M 1A
-// No team: 🤖 No active team
+// switchSessionCmd returns a command that emits a SessionSwitchMsg for the
+// currently selected member's session ID.
+func (b *TeamBar) switchSessionCmd() tea.Cmd {
+	sid := b.SelectedSessionID()
+	return func() tea.Msg {
+		return SessionSwitchMsg{SessionID: sid}
+	}
+}
+
+// View renders the 1-line team status bar with the selected member highlighted.
 func (b *TeamBar) View(width int) string {
 	barStyle := lipgloss.NewStyle().
 		Width(width).
@@ -80,14 +158,29 @@ func (b *TeamBar) View(width int) string {
 		return barStyle.Render(icon + label)
 	}
 
+	// Clamp selectedIndex if member count changed during refresh
+	if b.selectedIndex >= len(b.status.memberNames) {
+		b.selectedIndex = len(b.status.memberNames) - 1
+	}
+	if b.selectedIndex < 0 {
+		b.selectedIndex = 0
+	}
+
 	var parts []string
 	parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("🤖 "+b.status.teamName))
 
-	// Build member status string
+	// Build member status string with selection highlighting
 	var memberStrs []string
 	for i := range b.status.memberNames {
-		memberStrs = append(memberStrs,
-			b.status.memberIcons[i]+" "+b.status.memberNames[i]+"("+b.status.memberRoles[i]+")")
+		memberStr := b.status.memberIcons[i] + " " + b.status.memberNames[i] + "(" + b.status.memberRoles[i] + ")"
+		if b.focused && i == b.selectedIndex {
+			// Highlight selected member with reverse video (blue bg, black fg)
+			memberStr = lipgloss.NewStyle().
+				Background(lipgloss.Color("69")).
+				Foreground(lipgloss.Color("0")).
+				Render(memberStr)
+		}
+		memberStrs = append(memberStrs, memberStr)
 	}
 	if len(memberStrs) > 0 {
 		parts = append(parts, strings.Join(memberStrs, " "))
@@ -120,12 +213,12 @@ func (b *TeamBar) View(width int) string {
 
 // refresh fetches the latest team status from the workspace and caches it.
 func (b *TeamBar) refresh(com *common.Common) {
-	// Find the first active team.
 	teamID, teamName := b.findFirstTeam(com)
 	if teamID == "" {
 		b.status = nil
 		return
 	}
+	b.teamID = teamID
 
 	tr := com.Workspace.TeamRunner()
 	if tr == nil {
@@ -146,7 +239,6 @@ func (b *TeamBar) refresh(com *common.Common) {
 	for name := range runtimeStatus.Members {
 		names = append(names, name)
 	}
-	// Sort member names for deterministic order.
 	sortMemberNames(names)
 
 	ts := &TeamBarStatus{
@@ -154,6 +246,7 @@ func (b *TeamBar) refresh(com *common.Common) {
 		memberNames:  make([]string, 0, len(names)),
 		memberIcons:  make([]string, 0, len(names)),
 		memberRoles:  make([]string, 0, len(names)),
+		sessionIDs:   make([]string, 0, len(names)),
 		activeRuns:   runtimeStatus.ActiveRuns,
 		totalMembers: len(runtimeStatus.Members),
 	}
@@ -164,6 +257,12 @@ func (b *TeamBar) refresh(com *common.Common) {
 		ts.memberNames = append(ts.memberNames, name)
 		ts.memberIcons = append(ts.memberIcons, icon)
 		ts.memberRoles = append(ts.memberRoles, m.Role)
+		ts.sessionIDs = append(ts.sessionIDs, m.SessionID)
+	}
+
+	// Preserve selectedIndex on refresh if still in range.
+	if b.selectedIndex >= len(names) {
+		b.selectedIndex = 0
 	}
 
 	b.status = ts
