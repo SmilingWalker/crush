@@ -245,6 +245,11 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	return app, nil
 }
 
+// PermBridge returns the M5 PermissionBridge, or nil if not configured.
+func (app *App) PermBridge() *team.PermissionBridge {
+	return app.permBridge
+}
+
 // Config returns the pure-data configuration.
 func (app *App) Config() *config.Config {
 	return app.config.Config()

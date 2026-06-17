@@ -112,6 +112,11 @@ type Workspace interface {
 	PermissionSkipRequests() bool
 	PermissionSetSkipRequests(skip bool)
 
+	// PermBridgeResolve resolves a pending team permission request via the
+	// M5 PermissionBridge. reqID is the ToolCallID. allowed=true grants,
+	// false denies. scope is "call" (Allow Once) or "task" (Allow for Task).
+	PermBridgeResolve(reqID string, allowed bool, scope string) error
+
 	// Questions
 	QuestionsAnswer(res questions.QuestionsResponse)
 

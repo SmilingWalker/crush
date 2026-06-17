@@ -33,6 +33,7 @@ const (
 	// M5 team permission actions.
 	PermissionAllowOnce    PermissionAction = "allow_once"
 	PermissionAllowForTask PermissionAction = "allow_task"
+	PermissionDenyTeam     PermissionAction = "deny_team"
 )
 
 // Permissions dialog sizing constants.
@@ -264,6 +265,9 @@ func (p *Permissions) HandleMsg(msg tea.Msg) Action {
 			}
 			return p.respond(PermissionAllowForSession)
 		case key.Matches(msg, p.keyMap.Deny):
+			if p.teamCtx != nil {
+				return p.respond(PermissionDenyTeam)
+			}
 			return p.respond(PermissionDeny)
 		case key.Matches(msg, p.keyMap.ToggleDiffMode):
 			if p.hasDiffView() {
@@ -324,7 +328,7 @@ func (p *Permissions) selectCurrentOption() tea.Msg {
 		case 1:
 			return p.respond(PermissionAllowForTask)
 		default:
-			return p.respond(PermissionDeny)
+			return p.respond(PermissionDenyTeam)
 		}
 	}
 	switch p.selectedOption {
