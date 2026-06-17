@@ -179,7 +179,7 @@ func (b *TeamBar) findFirstTeam(com *common.Common) (teamID, teamName string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	resp, err := tw.ListTeams(ctx, proto.ListTeamsRequest{
-		WorkspaceID: com.Workspace.WorkingDir(),
+		WorkspaceID: "default",
 	})
 	if err != nil || len(resp.Teams) == 0 {
 		return "", ""
