@@ -36,12 +36,19 @@ type AppWorkspace struct {
 }
 
 // NewAppWorkspace creates a new AppWorkspace wrapping the given app
-// and config store.
+// and config store. If the app has a team.Service, it is automatically
+// injected via SetTeamService so the workspace can serve team API calls.
 func NewAppWorkspace(a *app.App, store *config.ConfigStore) *AppWorkspace {
-	return &AppWorkspace{
+	w := &AppWorkspace{
 		app:   a,
 		store: store,
 	}
+	if a != nil {
+		if svc := a.TeamService(); svc != nil {
+			w.SetTeamService(svc)
+		}
+	}
+	return w
 }
 
 // -- Sessions --
