@@ -640,6 +640,12 @@ func (w *ClientWorkspace) TeamRunner() team.TeamRunner {
 	return nil
 }
 
+// ActiveSessionTracker returns nil for client/server mode — team mode is not
+// supported over the wire yet.
+func (w *ClientWorkspace) ActiveSessionTracker() *team.ActiveSessionTracker {
+	return nil
+}
+
 func (w *ClientWorkspace) Shutdown() {
 	_ = w.client.DeleteWorkspace(context.Background(), w.workspaceID())
 }

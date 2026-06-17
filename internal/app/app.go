@@ -97,6 +97,11 @@ type App struct {
 	// to the inner permission.Service.
 	permBridge *team.PermissionBridge
 
+	// M5.2: activeSessionTracker is the shared singleton that tracks which
+	// session the user is currently viewing. PermissionBridge reads it to decide
+	// whether to pop up a permission dialog for team member tool calls.
+	activeSessionTracker *team.ActiveSessionTracker
+
 	// currentSessionID is set by agent run paths before tool execution.
 	// Used by team_create to write the leader member's session.
 	currentSessionID string
@@ -166,6 +171,10 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			"decision", e.Decision,
 		)
 	})
+
+	// M5.2: Create shared ActiveSessionTracker, inject into PermissionBridge.
+	app.activeSessionTracker = team.NewActiveSessionTracker()
+	app.permBridge.SetActiveSessionTracker(app.activeSessionTracker)
 
 	// Construct the team.Service from the shared *sql.DB. The 7 stores each
 	// wrap a *db.Queries (q above); the Service orchestrates them. Feature
@@ -248,6 +257,11 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 // PermBridge returns the M5 PermissionBridge, or nil if not configured.
 func (app *App) PermBridge() *team.PermissionBridge {
 	return app.permBridge
+}
+
+// ActiveSessionTracker returns the shared ActiveSessionTracker singleton.
+func (app *App) ActiveSessionTracker() *team.ActiveSessionTracker {
+	return app.activeSessionTracker
 }
 
 // Config returns the pure-data configuration.

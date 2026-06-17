@@ -172,6 +172,12 @@ type Workspace interface {
 	// TeamRunner returns the TeamRunner instance for this workspace, or nil
 	// if team mode is not configured (e.g. client/server mode, test fixtures).
 	TeamRunner() team.TeamRunner
+
+	// ActiveSessionTracker returns the shared ActiveSessionTracker singleton
+	// that tracks which session the user is currently viewing in the TUI.
+	// PermissionBridge reads it to decide whether to show a permission dialog
+	// for team member tool calls. Returns nil in client/server mode.
+	ActiveSessionTracker() *team.ActiveSessionTracker
 }
 
 // MCPResourceContents holds the contents of an MCP resource.
