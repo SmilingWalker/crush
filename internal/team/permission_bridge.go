@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/crush/internal/actor"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/google/uuid"
 )
 
 // PermAuditAction categorizes permission audit events.
@@ -204,6 +205,7 @@ type PermissionBridge struct {
 	// pendingRequests tracks requests awaiting UI decision
 	pendingRequests map[string]chan bool // requestID → decision channel
 	pendingMu       sync.Mutex
+	tracker         *ActiveSessionTracker // M5.2: shared singleton, injected via SetActiveSessionTracker
 }
 
 // NewPermissionBridge creates a PermissionBridge wrapping the given permission.Service.
@@ -225,6 +227,12 @@ func (b *PermissionBridge) SetAuditFunc(fn PermAuditFunc) {
 	b.auditFn = fn
 }
 
+// SetActiveSessionTracker injects the shared ActiveSessionTracker from app.go.
+// Must be called before any team member tool calls. Caller owns the tracker lifecycle.
+func (b *PermissionBridge) SetActiveSessionTracker(t *ActiveSessionTracker) {
+	b.tracker = t
+}
+
 // GetQueue returns the PermissionQueue for external access.
 func (b *PermissionBridge) GetQueue() *PermissionQueue {
 	return b.queue
@@ -232,11 +240,12 @@ func (b *PermissionBridge) GetQueue() *PermissionQueue {
 
 // Request implements the permission check for team sessions.
 // For non-team sessions it delegates directly to inner. For team sessions
-// it checks grants, enqueues a permission request, and waits for UI decision.
+// it checks the active session: if the user is viewing this member's session,
+// it shows a permission dialog; otherwise it uses the SkipRequests gate.
 func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePermissionRequest) (bool, error) {
-	// Check for team context — delegate non-team sessions to inner.
 	ac, hasTeam := actor.FromContext(ctx)
 	if !hasTeam || ac.TeamID == "" || ac.MemberID == "" {
+		// Non-team session — delegate to inner (leader normal flow).
 		return b.inner.Request(ctx, opts)
 	}
 
@@ -249,14 +258,71 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 		return true, nil
 	}
 
-	// M5: team session — check SkipRequests gate.
-	// If yolo mode (skip=true), auto-allow. Otherwise auto-deny.
-	// No channel blocking — member sessions run in background goroutines
-	// without a TUI, so there is no ResolveRequest caller to unblock them.
+	// Team session — check active session.
+	activeSID := ""
+	if b.tracker != nil {
+		activeSID = b.tracker.Get()
+	}
+	if activeSID != "" && activeSID == opts.SessionID {
+		// User is viewing this member's session — show permission dialog.
+		return b.requestWithUI(ctx, opts, ac)
+	}
+
+	// User is viewing another session — SkipRequests gate.
 	if b.inner.SkipRequests() {
 		return true, nil
 	}
 	return false, nil
+}
+
+// requestWithUI publishes a permission request to the inner broker so the TUI
+// opens a dialog, then blocks on a channel until the user decides or the context
+// is cancelled.
+func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.CreatePermissionRequest, ac actor.ActorContext) (bool, error) {
+	reqID := opts.ToolCallID
+	if reqID == "" {
+		reqID = uuid.New().String()
+	}
+
+	ch := make(chan bool, 1)
+	b.pendingMu.Lock()
+	b.pendingRequests[reqID] = ch
+	b.pendingMu.Unlock()
+
+	now := time.Now()
+	teamReq := &PermissionRequest{
+		ID:         reqID,
+		SessionID:  opts.SessionID,
+		ToolCallID: reqID,
+		ToolName:   opts.ToolName,
+		Action:     opts.Action,
+		Status:     "pending",
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(30 * time.Second),
+	}
+	b.queue.Enqueue(ctx, teamReq)
+
+	// Publish to inner's broker so the TUI dialog opens.
+	b.inner.Publish(pubsub.CreatedEvent, permission.PermissionRequest{
+		ID:         reqID,
+		ToolCallID: reqID,
+		ToolName:   opts.ToolName,
+		SessionID:  opts.SessionID,
+		Action:     opts.Action,
+		Path:       opts.Path,
+	})
+
+	select {
+	case <-ctx.Done():
+		b.pendingMu.Lock()
+		delete(b.pendingRequests, reqID)
+		b.pendingMu.Unlock()
+		b.queue.Dequeue(reqID)
+		return false, ctx.Err()
+	case allowed := <-ch:
+		b.queue.Dequeue(reqID)
+		return allowed, nil
+	}
 }
 
 // ResolveRequest is called by the UI when the user makes a decision on a
