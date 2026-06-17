@@ -74,18 +74,18 @@ func (m *UI) handleHistoryDown(msg tea.Msg) tea.Cmd {
 			return m.updateTextareaWithPrevHeight(nil, prevHeight)
 		}
 		// M5-P2: history exhausted — enter team bar if a team exists.
-		if m.teamBar != nil && m.com.Config().Options.IsAgentTeamEnabled() {
+		if m.teamBar != nil && m.com.Config().Options.IsAgentTeamEnabled() && m.teamBar.HasTeam() {
+			m.focus = uiFocusTeamBar
+			m.teamBar.SetFocused(true)
 			m.teamBar.SelectFirst()
-			if sid := m.teamBar.SelectedSessionID(); sid != "" {
-				m.focus = uiFocusTeamBar
-				m.teamBar.SetFocused(true)
-				m.textarea.Blur()
-				cmds := []tea.Cmd{
-					m.updateTextareaWithPrevHeight(nil, prevHeight),
-					m.loadSession(sid),
-				}
-				return tea.Batch(cmds...)
+			m.textarea.Blur()
+			cmds := []tea.Cmd{
+				m.updateTextareaWithPrevHeight(nil, prevHeight),
 			}
+			if sid := m.teamBar.SelectedSessionID(); sid != "" {
+				cmds = append(cmds, m.loadSession(sid))
+			}
+			return tea.Batch(cmds...)
 		}
 	}
 

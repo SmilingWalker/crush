@@ -104,6 +104,11 @@ func (b *TeamBar) SelectedSessionID() string {
 	return b.status.sessionIDs[b.selectedIndex]
 }
 
+// HasTeam reports whether the TeamBar has a cached team with members.
+func (b *TeamBar) HasTeam() bool {
+	return b.status != nil && len(b.status.memberNames) > 0
+}
+
 // SelectFirst selects the first member (leader) if available.
 func (b *TeamBar) SelectFirst() {
 	if b.status != nil && len(b.status.memberNames) > 0 {
