@@ -2110,18 +2110,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if cmd := m.openCommandsDialog(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-			case m.teamBar != nil && m.com.Config().Options.IsAgentTeamEnabled() &&
-				key.Matches(msg, key.NewBinding(key.WithKeys("down"))) &&
-				m.textarea.Value() == "":
-				// M5-P2: ↓ on empty input → enter team bar navigation
-				m.focus = uiFocusTeamBar
-				m.teamBar.SetFocused(true)
-				m.teamBar.SelectFirst()
-				// Switch to leader's session on entry
-				if sid := m.teamBar.SelectedSessionID(); sid != "" {
-					cmds = append(cmds, m.loadSession(sid))
-				}
-				m.textarea.Blur()
 			default:
 				if handleGlobalKeys(msg) {
 					// Handle global keys first before passing to textarea.
