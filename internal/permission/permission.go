@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -145,6 +146,20 @@ func (s *permissionService) resolve(permission PermissionRequest, granted, denie
 		Denied:     denied,
 	})
 
+	// M5.2 DEBUG
+	if f, err := os.OpenFile("G:/ai-project/remote-github/crush/perm_debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+		fmt.Fprintf(f, "RESOLVE req=%s granted=%v denied=%v\n", permission.ID, granted, denied)
+		// Print stack trace to find caller
+		pc := make([]uintptr, 10)
+		n := runtime.Callers(2, pc)
+		frames := runtime.CallersFrames(pc[:n])
+		for {
+			frame, more := frames.Next()
+			fmt.Fprintf(f, "  %s:%d %s\n", frame.File, frame.Line, frame.Function)
+			if !more { break }
+		}
+		f.Close()
+	}
 	// respCh is buffered (cap 1) and only ever has at most one sender
 	// per request because Take removes the entry under the map lock,
 	// so this send never blocks.
