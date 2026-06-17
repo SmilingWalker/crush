@@ -70,6 +70,13 @@ type SessionFile struct {
 // That report is fire-and-forget: errors are logged at debug and the
 // UI never blocks on the call.
 func (m *UI) loadSession(sessionID string) tea.Cmd {
+	// M5-P2: empty session ID means the member has no session yet
+	// (never been woken). Return an empty sessionMsg to clear chat.
+	if sessionID == "" {
+		return func() tea.Msg {
+			return loadSessionMsg{session: &session.Session{}, files: nil}
+		}
+	}
 	load := func() tea.Msg {
 		session, err := m.com.Workspace.GetSession(context.Background(), sessionID)
 		if err != nil {
