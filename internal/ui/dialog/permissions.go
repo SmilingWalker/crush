@@ -121,8 +121,8 @@ func defaultPermissionsKeyMap() permissionsKeyMap {
 			key.WithHelp("tab", "next option"),
 		),
 		Select: key.NewBinding(
-			key.WithKeys("enter", "ctrl+y"),
-			key.WithHelp("enter", "confirm"),
+			key.WithKeys("ctrl+y"),
+			key.WithHelp("ctrl+y", "confirm"),
 		),
 		Allow: key.NewBinding(
 			key.WithKeys("ctrl+a"),
