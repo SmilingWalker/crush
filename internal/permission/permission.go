@@ -2,7 +2,7 @@ package permission
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -272,26 +272,23 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// Publish the request
 	s.Publish(pubsub.CreatedEvent, permission)
 
-	slog.Warn("PERM_DEBUG: blocking on respCh",
-		"session_id", opts.SessionID,
-		"tool", opts.ToolName,
-		"req_id", permission.ID,
-	)
+	// M5.2 DEBUG — remove after diagnosis
+	writeDebug := func(msg string) {
+		f, err := os.OpenFile("G:/ai-project/remote-github/crush/perm_debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		fmt.Fprintln(f, msg)
+	}
+	writeDebug(fmt.Sprintf("BLOCK session=%s tool=%s req=%s", opts.SessionID, opts.ToolName, permission.ID))
 
 	select {
 	case <-ctx.Done():
-		slog.Warn("PERM_DEBUG: ctx.Done() fired",
-			"session_id", opts.SessionID,
-			"tool", opts.ToolName,
-			"err", ctx.Err(),
-		)
+		writeDebug(fmt.Sprintf("CTX_DONE session=%s tool=%s err=%v", opts.SessionID, opts.ToolName, ctx.Err()))
 		return false, ctx.Err()
 	case granted := <-respCh:
-		slog.Warn("PERM_DEBUG: respCh returned",
-			"session_id", opts.SessionID,
-			"tool", opts.ToolName,
-			"granted", granted,
-		)
+		writeDebug(fmt.Sprintf("RESPCH session=%s tool=%s granted=%v", opts.SessionID, opts.ToolName, granted))
 		return granted, nil
 	}
 }
