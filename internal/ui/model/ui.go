@@ -949,10 +949,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case SessionSwitchMsg:
-		// M5-P2: team bar navigation switched to a different member.
-		// Always load — empty session ID = member hasn't been woken yet,
-		// which clears the chat view to show empty session.
-		cmds = append(cmds, m.loadSession(msg.SessionID))
+		// M5-P2: only switch if target has a session. Empty = member never
+		// woken — keep current chat. Never load an empty session (would
+		// make hasSession() false → bar disappears → focus stuck).
+		if msg.SessionID != "" {
+			cmds = append(cmds, m.loadSession(msg.SessionID))
+		}
 
 	case FocusEditorMsg:
 		// M5-P2: ↑ or ↓ pressed in team bar → return focus to editor.

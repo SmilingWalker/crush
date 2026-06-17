@@ -79,13 +79,11 @@ func (m *UI) handleHistoryDown(msg tea.Msg) tea.Cmd {
 			m.teamBar.SetFocused(true)
 			m.teamBar.SelectFirst()
 			m.textarea.Blur()
-			cmds := []tea.Cmd{
+			// Leader always has a session (woken in team_create), so load it.
+			return tea.Batch(
 				m.updateTextareaWithPrevHeight(nil, prevHeight),
-			}
-			if sid := m.teamBar.SelectedSessionID(); sid != "" {
-				cmds = append(cmds, m.loadSession(sid))
-			}
-			return tea.Batch(cmds...)
+				m.loadSession(m.teamBar.SelectedSessionID()),
+			)
 		}
 	}
 
