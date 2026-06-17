@@ -33,7 +33,7 @@ func TestShutdown_Graceful_IdleMember(t *testing.T) {
 		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 
@@ -74,7 +74,7 @@ func TestShutdown_Cancel_IdleMember(t *testing.T) {
 		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -101,7 +101,7 @@ func TestShutdown_Force_IdleMember(t *testing.T) {
 		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -135,7 +135,7 @@ func TestShutdown_Idempotent(t *testing.T) {
 		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -181,7 +181,7 @@ func TestShutdown_StopWakeups(t *testing.T) {
 		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -224,7 +224,7 @@ func TestShutdown_FlushCalled(t *testing.T) {
 		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -246,7 +246,7 @@ func TestShutdown_FlushCalled(t *testing.T) {
 		TeamID: snap.Team.ID, Name: "m2", Role: "coder", AgentProfile: "{}",
 	})
 	require.NoError(t, err)
-	mr2 := NewMemberRunner(member2.ID, member2.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr2 := NewMemberRunner(member2.ID, member2.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr2.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -276,7 +276,7 @@ func TestShutdown_FlushError(t *testing.T) {
 		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -307,7 +307,7 @@ func TestShutdown_Cancel_WithActiveRun(t *testing.T) {
 	// Use a blocking runner so we can verify cancel behaviour.
 	blockingRunner := &blockingTurnRunner{done: make(chan struct{})}
 	factory := &stubAgentFactory{runner: blockingRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -355,7 +355,7 @@ func TestShutdown_Graceful_RunningMember(t *testing.T) {
 	// Use a delayed runner — completes after 200ms.
 	delayedRunner := &delayedTurnRunner{delay: 200 * time.Millisecond}
 	factory := &stubAgentFactory{runner: delayedRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -397,7 +397,7 @@ func TestShutdown_Force_WithActiveRun(t *testing.T) {
 
 	blockingRunner := &blockingTurnRunner{done: make(chan struct{})}
 	factory := &stubAgentFactory{runner: blockingRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -441,7 +441,7 @@ func TestShutdown_CtxCanceledDuringWait(t *testing.T) {
 
 	blockingRunner := &blockingTurnRunner{done: make(chan struct{})}
 	factory := &stubAgentFactory{runner: blockingRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)
@@ -480,7 +480,7 @@ func TestShutdown_EventsHavePublishedAt(t *testing.T) {
 		runResult: agent.TurnRunResult{Status: agent.TurnCompleted},
 	}
 	factory := &stubAgentFactory{runner: mockRunner}
-	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil)
+	mr := NewMemberRunner(member.ID, member.TeamID, agent.AgentSpec{}, factory, svc, nil, nil)
 	err = mr.Start(context.Background())
 	require.NoError(t, err)
 	time.Sleep(100 * time.Millisecond)

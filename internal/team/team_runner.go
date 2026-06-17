@@ -143,7 +143,7 @@ func (t *teamRunner) StartTeam(ctx context.Context, teamID string) error {
 			member.SessionID = &sessionID
 		}
 		spec := agent.AgentSpec{}
-		mr := NewMemberRunner(member.ID, teamID, spec, t.factory, t.svc, t.createSession)
+		mr := NewMemberRunner(member.ID, teamID, spec, t.factory, t.svc, t.createSession, t.WakeMember)
 		t.members[member.ID] = mr
 		go func() {
 			if err := mr.Start(context.Background()); err != nil {
@@ -196,7 +196,7 @@ func (t *teamRunner) SpawnMember(ctx context.Context, teamID, name, role, agentP
 		return TeamMember{}, fmt.Errorf("spawn member in db: %w", err)
 	}
 
-	mr := NewMemberRunner(dbMember.ID, teamID, spec, t.factory, t.svc, t.createSession)
+	mr := NewMemberRunner(dbMember.ID, teamID, spec, t.factory, t.svc, t.createSession, t.WakeMember)
 	// Use background context — the member's lifetime is independent of the
 	// spawning call's context (which is a short-lived tool handler ctx).
 	if err := mr.Start(context.Background()); err != nil {

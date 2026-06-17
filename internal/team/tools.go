@@ -185,7 +185,7 @@ type TeamSendMessageParams struct {
 //
 // Kind whitelist: only message and task_status are allowed. shutdown_request
 // and shutdown_ack are blocked (only the leader/TeamRunner can shut down members).
-func NewTeamSendMessageTool(memberID, teamID, role string, svc Service) fantasy.AgentTool {
+func NewTeamSendMessageTool(memberID, teamID, role string, svc Service, wakeRecipient func(ctx context.Context, teamID, memberID string, source WakeSource) error) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		TeamSendMessageToolName,
 		teamSendMessageDescription,
@@ -234,6 +234,16 @@ func NewTeamSendMessageTool(memberID, teamID, role string, svc Service) fantasy.
 			})
 			if err != nil {
 				return newTextError(fmt.Sprintf("send failed: %s", err.Error())), nil
+			}
+
+			// Wake each recipient so they process the new message.
+			if wakeRecipient != nil {
+				for _, rid := range recipientIDs {
+					if err := wakeRecipient(ctx, teamID, rid, WakeSourceMailbox); err != nil {
+						// Non-fatal: message is already stored. Log and continue.
+						_ = err
+					}
+				}
 			}
 
 			recipientList := "none"

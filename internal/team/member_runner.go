@@ -76,6 +76,7 @@ type MemberRunner struct {
 	flushFn      func(context.Context) error // flush pending writes before terminal state (nil-safe)
 	version      int                         // DB version from last successful UpdateMemberState CAS
 	createSession func(context.Context) (string, error) // nil-safe; creates session on first wake
+	wakeRecipient func(ctx context.Context, teamID, memberID string, source WakeSource) error // nil-safe; wakes other members
 }
 
 // NewMemberRunner creates a MemberRunner in MemberCreated state. The factory
@@ -87,6 +88,7 @@ func NewMemberRunner(
 	factory agent.AgentFactory,
 	svc Service,
 	createSession func(context.Context) (string, error),
+	wakeRecipient func(ctx context.Context, teamID, memberID string, source WakeSource) error,
 ) *MemberRunner {
 	return &MemberRunner{
 		ID:            id,
@@ -97,6 +99,7 @@ func NewMemberRunner(
 		svc:           svc,
 		wakeCh:        make(chan WakeSource, 10),
 		createSession: createSession,
+		wakeRecipient: wakeRecipient,
 	}
 }
 
@@ -222,7 +225,7 @@ func (m *MemberRunner) Start(ctx context.Context) error {
 	if ts, ok := runner.(agent.ToolSettableRunner); ok {
 		ts.AppendTools([]fantasy.AgentTool{
 			NewTeamReportStatusTool(m.ID, m.TeamID, m.svc),
-			NewTeamSendMessageTool(m.ID, m.TeamID, m.Role, m.svc),
+			NewTeamSendMessageTool(m.ID, m.TeamID, m.Role, m.svc, m.wakeRecipient),
 		})
 	}
 

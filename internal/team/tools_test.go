@@ -254,7 +254,7 @@ func TestTeamSendMessage_Direct(t *testing.T) {
 	svc, teamID, fromMemberID, toMemberID := newToolsFixture(t)
 	ctx := context.Background()
 
-	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc)
+	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc, nil)
 	input := marshalParams(t, map[string]string{
 		"recipient_type": "direct",
 		"to_member_id":   toMemberID,
@@ -279,7 +279,7 @@ func TestTeamSendMessage_Broadcast(t *testing.T) {
 	svc, teamID, fromMemberID, toMemberID := newToolsFixture(t)
 	ctx := context.Background()
 
-	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc)
+	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc, nil)
 	input := marshalParams(t, map[string]string{
 		"recipient_type": "broadcast",
 		"kind":           "message",
@@ -308,7 +308,7 @@ func TestTeamSendMessage_Role(t *testing.T) {
 	ctx := context.Background()
 
 	// fromMemberID=programmer, leaderMemberID=lead
-	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc)
+	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc, nil)
 	input := marshalParams(t, map[string]string{
 		"recipient_type": "role",
 		"to_role":        "lead",
@@ -336,7 +336,7 @@ func TestTeamSendMessage_RejectsShutdownRequest(t *testing.T) {
 	svc, teamID, fromMemberID, _ := newToolsFixture(t)
 	ctx := context.Background()
 
-	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc)
+	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc, nil)
 
 	for _, blocked := range []string{"shutdown_request", "shutdown_ack"} {
 		input := marshalParams(t, map[string]string{
@@ -356,7 +356,7 @@ func TestTeamSendMessage_MemberCanSendTaskStatus(t *testing.T) {
 	svc, teamID, fromMemberID, toMemberID := newToolsFixture(t)
 	ctx := context.Background()
 
-	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc)
+	tool := NewTeamSendMessageTool(fromMemberID, teamID, "programmer", svc, nil)
 	input := marshalParams(t, map[string]string{
 		"recipient_type": "direct",
 		"to_member_id":   toMemberID,
@@ -378,7 +378,7 @@ func TestTeamSendMessage_InvalidKind(t *testing.T) {
 	svc, teamID, memberID, _ := newToolsFixture(t)
 	ctx := context.Background()
 
-	tool := NewTeamSendMessageTool(memberID, teamID, "programmer", svc)
+	tool := NewTeamSendMessageTool(memberID, teamID, "programmer", svc, nil)
 	input := marshalParams(t, map[string]string{
 		"recipient_type": "broadcast",
 		"kind":           "bogus_kind",
@@ -395,7 +395,7 @@ func TestTeamSendMessage_InvalidRecipientType(t *testing.T) {
 	svc, teamID, memberID, _ := newToolsFixture(t)
 	ctx := context.Background()
 
-	tool := NewTeamSendMessageTool(memberID, teamID, "programmer", svc)
+	tool := NewTeamSendMessageTool(memberID, teamID, "programmer", svc, nil)
 	input := marshalParams(t, map[string]string{
 		"recipient_type": "telepathy",
 		"kind":           "message",
@@ -412,7 +412,7 @@ func TestTeamSendMessage_DirectRequiresToMemberID(t *testing.T) {
 	svc, teamID, memberID, _ := newToolsFixture(t)
 	ctx := context.Background()
 
-	tool := NewTeamSendMessageTool(memberID, teamID, "programmer", svc)
+	tool := NewTeamSendMessageTool(memberID, teamID, "programmer", svc, nil)
 	input := marshalParams(t, map[string]string{
 		"recipient_type": "direct",
 		// to_member_id intentionally missing
@@ -434,7 +434,7 @@ func TestMemberTools_Policy_ShutdownKindBlocked(t *testing.T) {
 	ctx := context.Background()
 
 	// Even if the DB role is "lead", the member tool blocks shutdown_request.
-	tool := NewTeamSendMessageTool(leaderID, teamID, "lead", svc)
+	tool := NewTeamSendMessageTool(leaderID, teamID, "lead", svc, nil)
 	for _, blocked := range []string{"shutdown_request", "shutdown_ack"} {
 		input := marshalParams(t, map[string]string{
 			"recipient_type": "broadcast",
@@ -454,7 +454,7 @@ func TestMemberTools_ToolNamesAreCorrect(t *testing.T) {
 	reportTool := NewTeamReportStatusTool(memberID, teamID, svc)
 	assert.Equal(t, "team_report_status", reportTool.Info().Name)
 
-	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc)
+	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc, nil)
 	assert.Equal(t, "team_send_message", sendTool.Info().Name)
 }
 
@@ -464,7 +464,7 @@ func TestMemberTools_DescriptionIsNonEmpty(t *testing.T) {
 	reportTool := NewTeamReportStatusTool(memberID, teamID, svc)
 	assert.NotEmpty(t, reportTool.Info().Description)
 
-	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc)
+	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc, nil)
 	assert.NotEmpty(t, sendTool.Info().Description)
 }
 
@@ -475,7 +475,7 @@ func TestMemberTools_ProviderOptions(t *testing.T) {
 	// ProviderOptions may be nil (fantasy.NewAgentTool default).
 	assert.Nil(t, reportTool.ProviderOptions())
 
-	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc)
+	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc, nil)
 	assert.Nil(t, sendTool.ProviderOptions())
 }
 
@@ -486,7 +486,7 @@ func TestMemberTools_SetProviderOptions(t *testing.T) {
 	// Should not panic.
 	reportTool.SetProviderOptions(fantasy.ProviderOptions{})
 
-	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc)
+	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc, nil)
 	sendTool.SetProviderOptions(fantasy.ProviderOptions{})
 }
 
@@ -500,7 +500,7 @@ func TestMemberTools_ReturnsErrorOnEmptyParams(t *testing.T) {
 	assert.True(t, resp.IsError)
 	assert.True(t, strings.Contains(resp.Content, "task_id") || strings.Contains(resp.Content, "required"))
 
-	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc)
+	sendTool := NewTeamSendMessageTool(memberID, teamID, "coder", svc, nil)
 	resp, err = sendTool.Run(ctx, fantasy.ToolCall{ID: "e2", Name: "team_send_message", Input: "{}"})
 	require.NoError(t, err)
 	assert.True(t, resp.IsError)
