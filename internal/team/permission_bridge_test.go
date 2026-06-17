@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGrantStore_FindActiveGrant(t *testing.T) {
@@ -117,41 +118,42 @@ func TestPermissionBridge_ResolveRequest_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not pending")
 }
 
-// TestPermissionBridge_RequestCancelable verifies that a team permission
-// request respects context cancellation via ctx.Done() in the select.
-func TestPermissionBridge_RequestCancelable(t *testing.T) {
-	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+// TestPermissionBridge_AutoAllowWhenSkipRequests verifies that team sessions
+// auto-allow tool calls when SkipRequests (yolo mode) is enabled.
+func TestPermissionBridge_AutoAllowWhenSkipRequests(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), true, nil) // skip=true
 	bridge := NewPermissionBridge(inner)
 
 	ac := actor.ActorContext{
 		SessionID: "s1", TeamID: "team-1", MemberID: "member-1",
 	}
 	ctx := ac.WithContext(t.Context())
-	cancelCtx, cancel := context.WithCancel(ctx)
 
-	// Fire Request in a goroutine; it should block on the team path.
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := bridge.Request(cancelCtx, permission.CreatePermissionRequest{
-			SessionID: "s1", ToolCallID: "tc-1", ToolName: "bash",
-			Action: "run", Description: "test", Path: ".",
-		})
-		errCh <- err
-	}()
+	allowed, err := bridge.Request(ctx, permission.CreatePermissionRequest{
+		SessionID: "s1", ToolCallID: "tc-1", ToolName: "bash",
+		Action: "run", Description: "test", Path: ".",
+	})
+	require.NoError(t, err)
+	assert.True(t, allowed, "team session with SkipRequests should auto-allow")
+}
 
-	// Give the goroutine time to enter the select.
-	time.Sleep(50 * time.Millisecond)
+// TestPermissionBridge_AutoDenyWhenNotSkipRequests verifies that team sessions
+// auto-deny tool calls when SkipRequests (yolo mode) is disabled.
+func TestPermissionBridge_AutoDenyWhenNotSkipRequests(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil) // skip=false
+	bridge := NewPermissionBridge(inner)
 
-	// Cancel the context — the select should wake up.
-	cancel()
-
-	select {
-	case err := <-errCh:
-		assert.ErrorIs(t, err, context.Canceled,
-			"bridge should return context.Canceled when ctx is cancelled")
-	case <-time.After(10 * time.Second):
-		t.Fatal("Request did not return after context cancellation")
+	ac := actor.ActorContext{
+		SessionID: "s1", TeamID: "team-1", MemberID: "member-1",
 	}
+	ctx := ac.WithContext(t.Context())
+
+	allowed, err := bridge.Request(ctx, permission.CreatePermissionRequest{
+		SessionID: "s1", ToolCallID: "tc-2", ToolName: "bash",
+		Action: "run", Description: "test", Path: ".",
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "team session without SkipRequests should auto-deny")
 }
 
 // TestPermissionBridge_PublishDelegatesToInner verifies that Publish on the

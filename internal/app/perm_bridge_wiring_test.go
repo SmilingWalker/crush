@@ -1,17 +1,14 @@
 package app
 
 import (
-	"context"
 	"database/sql"
 	"testing"
-	"time"
 
 	"github.com/charmbracelet/crush/internal/actor"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/permission"
-	"github.com/charmbracelet/crush/internal/team"
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,14 +90,10 @@ func TestPermissionBridge_ImplementsPermissionService(t *testing.T) {
 	assert.NotNil(t, svc)
 }
 
-// TestPermissionBridge_TeamSessionIntercepted verifies that when a team member
-// calls a tool, the PermissionBridge intercepts the request and routes it
-// through the team permission flow (grant check → enqueue → wait for UI)
-// instead of delegating to the inner permission.Service.
-//
-// We detect interception via the audit callback: the bridge fires
-// PermAuditPermissionRequested only when it enters the team-aware path.
-func TestPermissionBridge_TeamSessionIntercepted(t *testing.T) {
+// TestPermissionBridge_TeamSessionSkipRequestsGate verifies that team sessions
+// go through the SkipRequests gate (auto-allow when skip=true, auto-deny when
+// skip=false) instead of delegating to inner or blocking on a channel.
+func TestPermissionBridge_TeamSessionSkipRequestsGate(t *testing.T) {
 	cfg := newTestConfig(t)
 	cfg.Config().Options.Experimental = &config.ExperimentalOptions{AgentTeam: true}
 
@@ -108,15 +101,6 @@ func TestPermissionBridge_TeamSessionIntercepted(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, app.permBridge)
 
-	// Replace the audit function with one that signals on a channel
-	// when the bridge enters the team permission path.
-	auditCh := make(chan team.PermAuditEvent, 1)
-	app.permBridge.SetAuditFunc(func(_ context.Context, e team.PermAuditEvent) {
-		auditCh <- e
-	})
-
-	// Inject actor context with team info -- this triggers the bridge's
-	// team path (grant check → enqueue → wait for UI).
 	ac := actor.ActorContext{
 		SessionID:  "session-1",
 		TeamID:     "team-1",
@@ -125,31 +109,15 @@ func TestPermissionBridge_TeamSessionIntercepted(t *testing.T) {
 	}
 	teamCtx := ac.WithContext(t.Context())
 
-	// Call Request in a goroutine -- it will block waiting for UI because
-	// there are no active grants and nobody calls ResolveRequest. The bridge's
-	// select only checks <-ch and <-time.After(5min), so this goroutine
-	// will stay blocked for up to 5 minutes (cleaned up when test exits).
-	go func() {
-		_, _ = app.permBridge.Request(teamCtx, permission.CreatePermissionRequest{
-			SessionID:   "session-1",
-			ToolCallID:  "call-team-1",
-			ToolName:    "bash",
-			Action:      "run",
-			Description: "team command",
-			Path:        ".",
-		})
-	}()
-
-	// Wait for the audit event proving the bridge intercepted the request.
-	select {
-	case ev := <-auditCh:
-		assert.Equal(t, team.PermAuditPermissionRequested, ev.Action,
-			"bridge should fire permission_requested for team sessions")
-		assert.Equal(t, "team-1", ev.TeamID)
-		assert.Equal(t, "member-1", ev.MemberID)
-		assert.Equal(t, "bash", ev.ToolName)
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for bridge to intercept team request -- " +
-			"request may have been delegated to inner or audit not fired")
-	}
+	// Team session without SkipRequests should auto-deny.
+	allowed, err := app.permBridge.Request(teamCtx, permission.CreatePermissionRequest{
+		SessionID:   "session-1",
+		ToolCallID:  "call-team-1",
+		ToolName:    "bash",
+		Action:      "run",
+		Description: "team command",
+		Path:        ".",
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "team session without SkipRequests should auto-deny")
 }

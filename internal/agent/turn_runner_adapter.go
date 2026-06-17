@@ -30,7 +30,7 @@ func (a *TurnRunnerAdapter) Run(ctx context.Context, call TeamAgentCall) (TurnRu
 	result, err := a.sa.Run(ctx, SessionAgentCall{
 		SessionID:      call.SessionID,
 		Prompt:         call.PromptEnvelope,
-		NonInteractive: true, // member turns are background, not UI
+		NonInteractive: false, // member turns need full multi-turn tool loop
 	})
 	if err != nil {
 		return TurnRunResult{Status: TurnFailed}, fmt.Errorf("session agent run: %w", err)

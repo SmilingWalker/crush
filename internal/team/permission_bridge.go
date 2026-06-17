@@ -249,68 +249,14 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 		return true, nil
 	}
 
-	// Use ToolCallID as the request ID so the UI can reference it when
-	// calling ResolveRequest.
-	reqID := opts.ToolCallID
-	req := &PermissionRequest{
-		ID: reqID, TeamID: ac.TeamID, MemberID: ac.MemberID,
-		SessionID: opts.SessionID, Status: "pending", RequestedScope: "call",
-		ToolName: opts.ToolName, Action: opts.Action,
-		CreatedAt: time.Now(), ExpiresAt: time.Now().Add(5 * time.Minute),
+	// M5: team session — check SkipRequests gate.
+	// If yolo mode (skip=true), auto-allow. Otherwise auto-deny.
+	// No channel blocking — member sessions run in background goroutines
+	// without a TUI, so there is no ResolveRequest caller to unblock them.
+	if b.inner.SkipRequests() {
+		return true, nil
 	}
-	_ = b.store.CreateRequest(ctx, req)
-
-	// Enqueue in the permission queue for expiry management.
-	if err := b.queue.Enqueue(ctx, req); err != nil {
-		req.Status = "expired"
-		_ = b.store.UpdateRequest(ctx, req)
-		return false, nil
-	}
-
-	// Publish a permission.PermissionRequest to the inner broker so the
-	// UI subscription sees it and shows the permission dialog.
-	b.inner.Publish(pubsub.CreatedEvent, permission.PermissionRequest{
-		ID:          reqID,
-		SessionID:   opts.SessionID,
-		ToolCallID:  opts.ToolCallID,
-		ToolName:    opts.ToolName,
-		Description: opts.Description,
-		Action:      opts.Action,
-		Params:      opts.Params,
-		Path:        opts.Path,
-	})
-
-	// Wait for UI decision via channel.
-	ch := make(chan bool, 1)
-	b.pendingMu.Lock()
-	b.pendingRequests[reqID] = ch
-	b.pendingMu.Unlock()
-
-	b.auditFn(ctx, PermAuditEvent{
-		Action: PermAuditPermissionRequested, TeamID: ac.TeamID, MemberID: ac.MemberID,
-		ToolName: opts.ToolName, Timestamp: time.Now(),
-	})
-
-	select {
-	case allowed := <-ch:
-		return allowed, nil
-	case <-ctx.Done():
-		// Clean up the pending request entry to prevent channel leak.
-		b.pendingMu.Lock()
-		delete(b.pendingRequests, reqID)
-		b.pendingMu.Unlock()
-		req.Status = "canceled"
-		_ = b.store.UpdateRequest(ctx, req)
-		return false, ctx.Err()
-	case <-time.After(5 * time.Minute):
-		// Clean up the pending request entry to prevent channel leak.
-		b.pendingMu.Lock()
-		delete(b.pendingRequests, reqID)
-		b.pendingMu.Unlock()
-		req.Status = "expired"
-		_ = b.store.UpdateRequest(ctx, req)
-		return false, nil
-	}
+	return false, nil
 }
 
 // ResolveRequest is called by the UI when the user makes a decision on a
