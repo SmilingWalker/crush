@@ -73,18 +73,19 @@ func (m *UI) handleHistoryDown(msg tea.Msg) tea.Cmd {
 			// without this the cursor will show up in the wrong place.
 			return m.updateTextareaWithPrevHeight(nil, prevHeight)
 		}
-		// M5-P2: history exhausted — enter team bar navigation.
+		// M5-P2: history exhausted — enter team bar if a team exists.
 		if m.teamBar != nil && m.com.Config().Options.IsAgentTeamEnabled() {
-			m.focus = uiFocusTeamBar
-			m.teamBar.SetFocused(true)
 			m.teamBar.SelectFirst()
-			m.textarea.Blur()
-			var cmds []tea.Cmd
-			cmds = append(cmds, m.updateTextareaWithPrevHeight(nil, prevHeight))
 			if sid := m.teamBar.SelectedSessionID(); sid != "" {
-				cmds = append(cmds, m.loadSession(sid))
+				m.focus = uiFocusTeamBar
+				m.teamBar.SetFocused(true)
+				m.textarea.Blur()
+				cmds := []tea.Cmd{
+					m.updateTextareaWithPrevHeight(nil, prevHeight),
+					m.loadSession(sid),
+				}
+				return tea.Batch(cmds...)
 			}
-			return tea.Batch(cmds...)
 		}
 	}
 

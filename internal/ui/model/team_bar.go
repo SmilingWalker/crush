@@ -111,7 +111,15 @@ func (b *TeamBar) Update(msg tea.Msg, com *common.Common) tea.Cmd {
 		return b.tick()
 
 	case tea.KeyPressMsg:
-		if !b.focused || b.status == nil || len(b.status.memberNames) == 0 {
+		if !b.focused {
+			return nil
+		}
+		// ↑/↓ always return to editor, even without a team —
+		// otherwise the user gets stuck with no way out.
+		if key.Matches(msg, key.NewBinding(key.WithKeys("up", "down"))) {
+			return func() tea.Msg { return FocusEditorMsg{} }
+		}
+		if b.status == nil || len(b.status.memberNames) == 0 {
 			return nil
 		}
 		switch {
@@ -128,9 +136,6 @@ func (b *TeamBar) Update(msg tea.Msg, com *common.Common) tea.Cmd {
 				b.selectedIndex++
 				return b.switchSessionCmd()
 			}
-		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "down"))):
-			// ↑ and ↓ both return focus to editor (symmetric)
-			return func() tea.Msg { return FocusEditorMsg{} }
 		}
 	}
 	return nil
