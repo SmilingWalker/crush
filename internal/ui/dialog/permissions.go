@@ -121,29 +121,29 @@ func defaultPermissionsKeyMap() permissionsKeyMap {
 			key.WithHelp("tab", "next option"),
 		),
 		Select: key.NewBinding(
-			key.WithKeys("ctrl+y"),
-			key.WithHelp("ctrl+y", "confirm"),
+			key.WithKeys("enter", "ctrl+y"),
+			key.WithHelp("enter", "confirm"),
 		),
 		Allow: key.NewBinding(
-			key.WithKeys("ctrl+a"),
-			key.WithHelp("ctrl+a", "allow"),
+			key.WithKeys("a", "A", "ctrl+a"),
+			key.WithHelp("a", "allow"),
 		),
 		AllowSession: key.NewBinding(
-			key.WithKeys("ctrl+s"),
-			key.WithHelp("ctrl+s", "allow session"),
+			key.WithKeys("s", "S", "ctrl+s"),
+			key.WithHelp("s", "allow session"),
 		),
 		Deny: key.NewBinding(
-			key.WithKeys("ctrl+d"),
-			key.WithHelp("ctrl+d", "deny"),
+			key.WithKeys("d", "D"),
+			key.WithHelp("d", "deny"),
 		),
 		Close: CloseKey,
 		ToggleDiffMode: key.NewBinding(
-			key.WithKeys("ctrl+t"),
-			key.WithHelp("ctrl+t", "toggle diff view"),
+			key.WithKeys("t"),
+			key.WithHelp("t", "toggle diff view"),
 		),
 		ToggleFullscreen: key.NewBinding(
-			key.WithKeys("ctrl+f"),
-			key.WithHelp("ctrl+f", "toggle fullscreen"),
+			key.WithKeys("f"),
+			key.WithHelp("f", "toggle fullscreen"),
 		),
 		ScrollUp: key.NewBinding(
 			key.WithKeys("shift+up", "K"),
