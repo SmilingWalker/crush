@@ -353,3 +353,9 @@ func (b *PermissionBridge) SubscribeNotifications(ctx context.Context) <-chan pu
 func (b *PermissionBridge) Subscribe(ctx context.Context) <-chan pubsub.Event[permission.PermissionRequest] {
 	return b.inner.Subscribe(ctx)
 }
+
+// Publish delegates to the inner permission.Service so the bridge can
+// publish team permission requests to the UI event stream.
+func (b *PermissionBridge) Publish(et pubsub.EventType, payload permission.PermissionRequest) {
+	b.inner.Publish(et, payload)
+}

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -112,4 +114,28 @@ func TestPermissionBridge_ResolveRequest_NotFound(t *testing.T) {
 	err := bridge.ResolveRequest("nonexistent", true, "call")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not pending")
+}
+
+// TestPermissionBridge_PublishDelegatesToInner verifies that Publish on the
+// bridge delegates to inner.Publish, enabling team permission requests to
+// reach the UI event stream.
+func TestPermissionBridge_PublishDelegatesToInner(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), true, nil)
+	bridge := NewPermissionBridge(inner)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	ch := inner.Subscribe(ctx)
+
+	req := permission.PermissionRequest{
+		ID: "req-1", SessionID: "s1", ToolCallID: "t1", ToolName: "bash",
+	}
+	bridge.Publish(pubsub.CreatedEvent, req)
+
+	select {
+	case ev := <-ch:
+		assert.Equal(t, "req-1", ev.Payload.ID)
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for published event")
+	}
 }

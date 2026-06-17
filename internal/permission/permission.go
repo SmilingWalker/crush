@@ -64,6 +64,8 @@ type PermissionRequest struct {
 
 type Service interface {
 	pubsub.Subscriber[PermissionRequest]
+	pubsub.Publisher[PermissionRequest]
+
 	// GrantPersistent grants a permission request and remembers the grant
 	// for the session. It returns true if this call actually resolved the
 	// pending request; false if the request had already been resolved
