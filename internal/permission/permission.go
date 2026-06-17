@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -271,10 +272,26 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	// Publish the request
 	s.Publish(pubsub.CreatedEvent, permission)
 
+	slog.Warn("PERM_DEBUG: blocking on respCh",
+		"session_id", opts.SessionID,
+		"tool", opts.ToolName,
+		"req_id", permission.ID,
+	)
+
 	select {
 	case <-ctx.Done():
+		slog.Warn("PERM_DEBUG: ctx.Done() fired",
+			"session_id", opts.SessionID,
+			"tool", opts.ToolName,
+			"err", ctx.Err(),
+		)
 		return false, ctx.Err()
 	case granted := <-respCh:
+		slog.Warn("PERM_DEBUG: respCh returned",
+			"session_id", opts.SessionID,
+			"tool", opts.ToolName,
+			"granted", granted,
+		)
 		return granted, nil
 	}
 }
