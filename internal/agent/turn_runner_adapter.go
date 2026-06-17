@@ -27,6 +27,9 @@ func NewTurnRunnerFromSessionAgent(sa SessionAgent) TurnRunner {
 
 // Run executes one agent turn. Maps TeamAgentCall fields to SessionAgentCall.
 func (a *TurnRunnerAdapter) Run(ctx context.Context, call TeamAgentCall) (TurnRunResult, error) {
+	// Inject actor context so downstream (tools, PermissionBridge, hooks)
+	// can identify this as a team member session.
+	ctx = call.Actor.WithContext(ctx)
 	result, err := a.sa.Run(ctx, SessionAgentCall{
 		SessionID:      call.SessionID,
 		Prompt:         call.PromptEnvelope,

@@ -51,7 +51,7 @@ func TestTurnRunnerAdapter_Run_Success(t *testing.T) {
 	require.Len(t, runCalls, 1)
 	assert.Equal(t, "sess-1", runCalls[0].SessionID)
 	assert.Equal(t, "hello", runCalls[0].Prompt)
-	assert.True(t, runCalls[0].NonInteractive)
+	assert.False(t, runCalls[0].NonInteractive) // member turns need full multi-turn tool loop
 }
 
 func TestTurnRunnerAdapter_Run_Error(t *testing.T) {
@@ -66,6 +66,30 @@ func TestTurnRunnerAdapter_Run_Error(t *testing.T) {
 	})
 	assert.Error(t, err)
 	assert.Equal(t, TurnFailed, result.Status)
+}
+
+func TestTurnRunnerAdapter_Run_InjectsActorContext(t *testing.T) {
+	var capturedCtx context.Context
+	mock := &trackableSA{}
+	mock.runFunc = func(ctx context.Context, call SessionAgentCall) (*fantasy.AgentResult, error) {
+		capturedCtx = ctx
+		return &fantasy.AgentResult{}, nil
+	}
+
+	adapter := NewTurnRunnerFromSessionAgent(mock)
+	ac := actor.ActorContext{SessionID: "sess-1", TeamID: "team-1", MemberID: "member-1", MemberRole: "coder"}
+	_, err := adapter.Run(context.Background(), TeamAgentCall{
+		SessionID:      "sess-1",
+		PromptEnvelope: "test",
+		Actor:          ac,
+	})
+	require.NoError(t, err)
+
+	got, ok := actor.FromContext(capturedCtx)
+	assert.True(t, ok)
+	assert.Equal(t, "team-1", got.TeamID)
+	assert.Equal(t, "member-1", got.MemberID)
+	assert.Equal(t, "coder", got.MemberRole)
 }
 
 func TestTurnRunnerAdapter_Cancel(t *testing.T) {
