@@ -1071,36 +1071,29 @@ func (c *coordinator) BuildSessionAgent(ctx context.Context, spec AgentSpec) (Se
 		Notify:               c.notify,
 	})
 
-	// Build system prompt in background.
-	c.readyWg.Go(func() error {
-		var systemPrompt string
-		if spec.SystemPrompt != "" {
-			// Use the caller-supplied system prompt directly.
-			systemPrompt = spec.SystemPrompt
-		} else {
-			// Default: use the member prompt template.
-			p, err := memberPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
-			if err != nil {
-				return err
-			}
-			systemPrompt, err = p.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
-			if err != nil {
-				return err
-			}
-		}
-		result.SetSystemPrompt(systemPrompt)
-		return nil
-	})
-
-	// Build tools in background.
-	c.readyWg.Go(func() error {
-		tools, err := c.buildTools(ctx, agentCfg, false)
+	// Build system prompt synchronously — readyWg may have already been
+	// Wait()ed during coordinator init, so background Go() calls would fail
+	// silently. Member spawn is not a hot path; build tools inline.
+	var systemPrompt string
+	if spec.SystemPrompt != "" {
+		systemPrompt = spec.SystemPrompt
+	} else {
+		p, err := memberPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
 		if err != nil {
-			return err
+			return nil, err
 		}
-		result.SetTools(tools)
-		return nil
-	})
+		systemPrompt, err = p.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	result.SetSystemPrompt(systemPrompt)
+
+	tools, err := c.buildTools(ctx, agentCfg, false)
+	if err != nil {
+		return nil, err
+	}
+	result.SetTools(tools)
 
 	return result, nil
 }
