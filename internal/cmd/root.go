@@ -124,6 +124,11 @@ crush --continue
 		event.AppInitialized()
 
 		com := common.DefaultCommon(ws)
+
+		// M5.2: Wire the shared ActiveSessionTracker into Common so the TUI
+		// can notify PermissionBridge on session switches.
+		com.ActiveSessionTracker = ws.ActiveSessionTracker()
+
 		model := ui.New(com, sessionID, continueLast)
 
 		var env uv.Environ = os.Environ()

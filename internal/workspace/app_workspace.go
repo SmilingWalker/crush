@@ -443,6 +443,12 @@ func (w *AppWorkspace) App() *app.App {
 	return w.app
 }
 
+// ActiveSessionTracker returns the shared ActiveSessionTracker singleton
+// from the underlying app.
+func (w *AppWorkspace) ActiveSessionTracker() *team.ActiveSessionTracker {
+	return w.app.ActiveSessionTracker()
+}
+
 // Store returns the underlying config store.
 func (w *AppWorkspace) Store() *config.ConfigStore {
 	return w.store

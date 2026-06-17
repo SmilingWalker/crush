@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/team"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/ui/util"
 	"github.com/charmbracelet/crush/internal/workspace"
@@ -24,6 +25,9 @@ var AllowedImageTypes = []string{".jpg", ".jpeg", ".png"}
 type Common struct {
 	Workspace workspace.Workspace
 	Styles    *styles.Styles
+
+	// M5.2: ActiveSessionTracker is the shared singleton. Set by app.go during wiring.
+	ActiveSessionTracker *team.ActiveSessionTracker
 }
 
 // Config returns the pure-data configuration associated with this [Common] instance.

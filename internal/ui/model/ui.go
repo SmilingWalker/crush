@@ -956,6 +956,11 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loadSession(msg.SessionID))
 		}
 
+		// M5.2: Notify the permission bridge which session the user is viewing.
+		if m.com != nil && m.com.ActiveSessionTracker != nil {
+			m.com.ActiveSessionTracker.Set(msg.SessionID)
+		}
+
 	case FocusEditorMsg:
 		// M5-P2: ↑ or ↓ pressed in team bar → return focus to editor.
 		m.focus = uiFocusEditor
