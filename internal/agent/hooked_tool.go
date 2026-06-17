@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"charm.land/fantasy"
+	"github.com/charmbracelet/crush/internal/actor"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/hooks"
 	"github.com/charmbracelet/crush/internal/permission"
@@ -60,6 +61,14 @@ func (h *hookedTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.To
 	}
 
 	if result.Decision == hooks.DecisionDeny || result.Halt {
+		// Team audit: record hook deny for team members.
+		if ac, hasTeam := actor.FromContext(ctx); hasTeam && ac.TeamID != "" {
+			slog.Info("team_audit:hook_deny",
+				"member_id", ac.MemberID,
+				"team_id", ac.TeamID,
+				"tool", call.Name,
+			)
+		}
 		reason := fmt.Sprintf("Tool call blocked by hook. Reason: %s", result.Reason)
 		if result.Halt {
 			reason = fmt.Sprintf("Turn halted by hook. Reason: %s", result.Reason)
@@ -81,6 +90,14 @@ func (h *hookedTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.To
 	// to the normal permission flow.
 	if result.Decision == hooks.DecisionAllow {
 		ctx = permission.WithHookApproval(ctx, call.ID)
+		// Team audit: record hook allow for team members.
+		if ac, hasTeam := actor.FromContext(ctx); hasTeam && ac.TeamID != "" {
+			slog.Info("team_audit:hook_allow",
+				"member_id", ac.MemberID,
+				"team_id", ac.TeamID,
+				"tool", call.Name,
+			)
+		}
 	}
 
 	resp, err := h.inner.Run(ctx, call)
