@@ -1620,6 +1620,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionPermissionResponse:
 		m.dialog.CloseDialog(dialog.PermissionsID)
 		switch msg.Action {
+		case dialog.PermissionAllowOnce:
+			_ = m.com.Workspace.PermBridgeResolve(msg.Permission.ID, true, "call")
+		case dialog.PermissionAllowForTask:
+			_ = m.com.Workspace.PermBridgeResolve(msg.Permission.ID, true, "task")
+		case dialog.PermissionDenyTeam:
+			_ = m.com.Workspace.PermBridgeResolve(msg.Permission.ID, false, "")
 		case dialog.PermissionAllow:
 			m.com.Workspace.PermissionGrant(msg.Permission)
 		case dialog.PermissionAllowForSession:

@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/crush/internal/actor"
+	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/pubsub"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -112,4 +115,65 @@ func TestPermissionBridge_ResolveRequest_NotFound(t *testing.T) {
 	err := bridge.ResolveRequest("nonexistent", true, "call")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not pending")
+}
+
+// TestPermissionBridge_RequestCancelable verifies that a team permission
+// request respects context cancellation via ctx.Done() in the select.
+func TestPermissionBridge_RequestCancelable(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+
+	ac := actor.ActorContext{
+		SessionID: "s1", TeamID: "team-1", MemberID: "member-1",
+	}
+	ctx := ac.WithContext(t.Context())
+	cancelCtx, cancel := context.WithCancel(ctx)
+
+	// Fire Request in a goroutine; it should block on the team path.
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.Request(cancelCtx, permission.CreatePermissionRequest{
+			SessionID: "s1", ToolCallID: "tc-1", ToolName: "bash",
+			Action: "run", Description: "test", Path: ".",
+		})
+		errCh <- err
+	}()
+
+	// Give the goroutine time to enter the select.
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel the context — the select should wake up.
+	cancel()
+
+	select {
+	case err := <-errCh:
+		assert.ErrorIs(t, err, context.Canceled,
+			"bridge should return context.Canceled when ctx is cancelled")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Request did not return after context cancellation")
+	}
+}
+
+// TestPermissionBridge_PublishDelegatesToInner verifies that Publish on the
+// bridge delegates to inner.Publish, enabling team permission requests to
+// reach the UI event stream.
+func TestPermissionBridge_PublishDelegatesToInner(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), true, nil)
+	bridge := NewPermissionBridge(inner)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	ch := inner.Subscribe(ctx)
+
+	req := permission.PermissionRequest{
+		ID: "req-1", SessionID: "s1", ToolCallID: "t1", ToolName: "bash",
+	}
+	bridge.Publish(pubsub.CreatedEvent, req)
+
+	select {
+	case ev := <-ch:
+		assert.Equal(t, "req-1", ev.Payload.ID)
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for published event")
+	}
 }

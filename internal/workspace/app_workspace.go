@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"log/slog"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/crush/internal/agent"
 	mcptools "github.com/charmbracelet/crush/internal/agent/tools/mcp"
@@ -205,6 +207,23 @@ func (w *AppWorkspace) PermissionGrantPersistent(perm permission.PermissionReque
 
 func (w *AppWorkspace) PermissionDeny(perm permission.PermissionRequest) bool {
 	return w.app.Permissions.Deny(perm)
+}
+
+// PermBridgeResolve resolves a pending team permission request via the
+// PermissionBridge. Called by the UI when the user clicks Allow Once,
+// Allow for Task, or Deny on a team permission dialog.
+func (w *AppWorkspace) PermBridgeResolve(reqID string, allowed bool, scope string) error {
+	if w.app.PermBridge() == nil {
+		return fmt.Errorf("permission bridge not configured")
+	}
+	if err := w.app.PermBridge().ResolveRequest(reqID, allowed, scope); err != nil {
+		// If the request is no longer pending (e.g., timed out or already
+		// resolved by another client), log and treat as non-fatal so the
+		// UI can close the dialog gracefully.
+		slog.Debug("team permission resolve failed", "req_id", reqID, "error", err)
+		return err
+	}
+	return nil
 }
 
 func (w *AppWorkspace) PermissionSkipRequests() bool {

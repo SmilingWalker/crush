@@ -316,6 +316,10 @@ func (w *ClientWorkspace) PermissionDeny(perm permission.PermissionRequest) bool
 	return resolved
 }
 
+func (w *ClientWorkspace) PermBridgeResolve(_ string, _ bool, _ string) error {
+	return fmt.Errorf("team permission bridge not available in client mode")
+}
+
 func (w *ClientWorkspace) PermissionSkipRequests() bool {
 	skip, err := w.client.GetPermissionsSkipRequests(context.Background(), w.workspaceID())
 	if err != nil {

@@ -278,6 +278,8 @@ type stubPermissionService struct {
 	autoApproveCalled     bool
 	skipSet               bool
 	skipCalled            bool
+	publishCalled         bool
+	lastPublished         permission.PermissionRequest
 }
 
 func (s *stubPermissionService) Request(ctx context.Context, opts permission.CreatePermissionRequest) (bool, error) {
@@ -321,4 +323,9 @@ func (s *stubPermissionService) SubscribeNotifications(ctx context.Context) <-ch
 func (s *stubPermissionService) Subscribe(ctx context.Context) <-chan pubsub.Event[permission.PermissionRequest] {
 	ch := make(chan pubsub.Event[permission.PermissionRequest], 1)
 	return ch
+}
+
+func (s *stubPermissionService) Publish(et pubsub.EventType, payload permission.PermissionRequest) {
+	s.publishCalled = true
+	s.lastPublished = payload
 }
