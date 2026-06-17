@@ -90,6 +90,13 @@ type App struct {
 	// stale-run recovery. Wired in New() alongside TeamRunner.
 	teamScheduler *team.Scheduler
 
+	// permBridge is the M5 PermissionBridge — a team-aware wrapper around
+	// Permissions that intercepts tool calls from team members and routes
+	// them through the team permission flow (grant check → enqueue → wait
+	// for UI approval). For non-team sessions it delegates transparently
+	// to the inner permission.Service.
+	permBridge *team.PermissionBridge
+
 	// currentSessionID is set by agent run paths before tool execution.
 	// Used by team_create to write the leader member's session.
 	currentSessionID string
@@ -144,6 +151,21 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		tuiWG:              &sync.WaitGroup{},
 		agentNotifications: pubsub.NewBroker[notify.Notification](),
 	}
+
+	// M5: wrap the permission service with the PermissionBridge so team
+	// member tool calls are intercepted and routed through the team
+	// permission flow (grant check → enqueue → wait for UI approval).
+	// Non-team sessions pass through transparently to the inner service.
+	app.permBridge = team.NewPermissionBridge(app.Permissions)
+	app.permBridge.SetAuditFunc(func(ctx context.Context, e team.PermAuditEvent) {
+		slog.Info("team permission audit",
+			"action", e.Action,
+			"team_id", e.TeamID,
+			"member_id", e.MemberID,
+			"tool", e.ToolName,
+			"decision", e.Decision,
+		)
+	})
 
 	// Construct the team.Service from the shared *sql.DB. The 7 stores each
 	// wrap a *db.Queries (q above); the Service orchestrates them. Feature
@@ -609,7 +631,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.config,
 		app.Sessions,
 		app.Messages,
-		app.Permissions,
+		app.permBridge,
 		app.Questions,
 		app.History,
 		app.FileTracker,
