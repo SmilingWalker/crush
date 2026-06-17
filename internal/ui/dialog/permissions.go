@@ -29,6 +29,10 @@ const (
 	PermissionAllow           PermissionAction = "allow"
 	PermissionAllowForSession PermissionAction = "allow_session"
 	PermissionDeny            PermissionAction = "deny"
+
+	// M5 team permission actions.
+	PermissionAllowOnce    PermissionAction = "allow_once"
+	PermissionAllowForTask PermissionAction = "allow_task"
 )
 
 // Permissions dialog sizing constants.
@@ -62,6 +66,10 @@ type Permissions struct {
 
 	permission     permission.PermissionRequest
 	selectedOption int // 0: Allow, 1: Allow for session, 2: Deny
+
+	// teamCtx, when non-nil, extends the dialog with team context
+	// (member name, task title, etc.) for M5 Team Permission UI.
+	teamCtx *TeamPermissionContext
 
 	viewport      viewport.Model
 	viewportDirty bool // true when viewport content needs to be re-rendered
@@ -246,8 +254,14 @@ func (p *Permissions) HandleMsg(msg tea.Msg) Action {
 		case key.Matches(msg, p.keyMap.Select):
 			return p.selectCurrentOption()
 		case key.Matches(msg, p.keyMap.Allow):
+			if p.teamCtx != nil {
+				return p.respond(PermissionAllowOnce)
+			}
 			return p.respond(PermissionAllow)
 		case key.Matches(msg, p.keyMap.AllowSession):
+			if p.teamCtx != nil {
+				return p.respond(PermissionAllowForTask)
+			}
 			return p.respond(PermissionAllowForSession)
 		case key.Matches(msg, p.keyMap.Deny):
 			return p.respond(PermissionDeny)
@@ -303,6 +317,16 @@ func (p *Permissions) HandleMsg(msg tea.Msg) Action {
 }
 
 func (p *Permissions) selectCurrentOption() tea.Msg {
+	if p.teamCtx != nil {
+		switch p.selectedOption {
+		case 0:
+			return p.respond(PermissionAllowOnce)
+		case 1:
+			return p.respond(PermissionAllowForTask)
+		default:
+			return p.respond(PermissionDeny)
+		}
+	}
 	switch p.selectedOption {
 	case 0:
 		return p.respond(PermissionAllow)
@@ -456,7 +480,21 @@ func (p *Permissions) renderHeader(contentWidth int) string {
 	toolLine := p.renderToolName(contentWidth)
 	pathLine := p.renderKeyValue("Path", fsext.PrettyPath(p.permission.Path), contentWidth)
 
-	lines := []string{title, "", toolLine, pathLine}
+	lines := []string{}
+
+	// Prepend team context when available (M5 team permission UI).
+	if p.teamCtx != nil {
+		lines = append(lines,
+			p.renderKeyValue("Team", p.teamCtx.TeamName, contentWidth),
+			p.renderKeyValue("Member", p.teamCtx.MemberName+" ("+p.teamCtx.MemberRole+")", contentWidth),
+		)
+		if p.teamCtx.TaskTitle != "" {
+			lines = append(lines, p.renderKeyValue("Task", p.teamCtx.TaskTitle, contentWidth))
+		}
+		lines = append(lines, "")
+	}
+
+	lines = append(lines, title, "", toolLine, pathLine)
 
 	// Add tool-specific header info.
 	switch p.permission.ToolName {
@@ -736,10 +774,19 @@ func (p *Permissions) renderContentPanel(content string, width int) string {
 }
 
 func (p *Permissions) renderButtons(contentWidth int) string {
-	buttons := []common.ButtonOpts{
-		{Text: "Allow", UnderlineIndex: 0, Selected: p.selectedOption == 0},
-		{Text: "Allow for Session", UnderlineIndex: 10, Selected: p.selectedOption == 1},
-		{Text: "Deny", UnderlineIndex: 0, Selected: p.selectedOption == 2},
+	var buttons []common.ButtonOpts
+	if p.teamCtx != nil {
+		buttons = []common.ButtonOpts{
+			{Text: "Allow Once", UnderlineIndex: 6, Selected: p.selectedOption == 0},
+			{Text: "Allow for Task", UnderlineIndex: 10, Selected: p.selectedOption == 1},
+			{Text: "Deny", UnderlineIndex: 0, Selected: p.selectedOption == 2},
+		}
+	} else {
+		buttons = []common.ButtonOpts{
+			{Text: "Allow", UnderlineIndex: 0, Selected: p.selectedOption == 0},
+			{Text: "Allow for Session", UnderlineIndex: 10, Selected: p.selectedOption == 1},
+			{Text: "Deny", UnderlineIndex: 0, Selected: p.selectedOption == 2},
+		}
 	}
 
 	content := common.ButtonGroup(p.com.Styles, buttons, "  ")
