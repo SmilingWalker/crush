@@ -18,16 +18,21 @@ Navigate between team members from the team bar and switch the chat view to any 
 │   ^^高亮                                              │
 └─────────────────────────────────────────────────────────┘
 
-  ↓(空) : 输入框 → team bar（leader 高亮）
+  ↓ ↑   : 输入框 ↔ team bar（双向切换）
+          - 输入框空时 ↓ → 进入 team bar，leader 高亮
+          - team bar 中 ↑ → 回到输入框
+          - team bar 中 ↓ → 也回到输入框
+          - ↑ ↓ 对称，同一个行为
+
   ← →   : 在 team bar 里切换选中成员
-  ↓     : team bar → 回输入框
-  Enter  : 回到输入框
+          - focus 留在 bar 内
+          - 选中即切换 — 聊天区立即显示该 member 的会话
 ```
 
 **关键行为**：
 - 选中即切换 — 在 team bar 里选中某个 member 时，上方的聊天区域立即显示该 member 的会话
 - 高亮 = 当前正在看谁 — 始终有一个 member 高亮（默认 leader）
-- 无 mode 切换感 — 不是 "进入查看模式"，就是焦点在三层之间跳转：输入框 ↔ team bar
+- 焦点只有两层：输入框／team bar，`↑` `↓` 对称切换
 
 ## Data Changes
 
