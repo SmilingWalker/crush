@@ -575,6 +575,26 @@ func (q *Queries) UpdateMemberCAS(ctx context.Context, arg UpdateMemberCASParams
 	return i, err
 }
 
+const updateMemberSession = `-- name: UpdateMemberSession :exec
+UPDATE team_members
+SET session_id = ?, updated_at = ?
+WHERE id = ? AND team_id = ?
+`
+
+type UpdateMemberSessionParams struct {
+	SessionID string `json:"session_id"`
+	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`
+	TeamID    string `json:"team_id"`
+}
+
+func (q *Queries) UpdateMemberSession(ctx context.Context, arg UpdateMemberSessionParams) error {
+	_, err := q.exec(ctx, q.updateMemberSessionStmt, updateMemberSession,
+		arg.SessionID, arg.UpdatedAt, arg.ID, arg.TeamID,
+	)
+	return err
+}
+
 const insertTask = `-- name: InsertTask :one
 INSERT INTO team_tasks (id, team_id, title, description, status, assignee_member_id, created_by_member_id, priority, version, created_at, updated_at)
 VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, 1, ?, ?)

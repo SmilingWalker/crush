@@ -165,3 +165,8 @@ LIMIT 1;
 SELECT * FROM team_session_links
 WHERE team_id = ?
 ORDER BY linked_at DESC;
+
+-- name: UpdateMemberSession :exec
+UPDATE team_members
+SET session_id = ?, updated_at = ?
+WHERE id = ? AND team_id = ?;

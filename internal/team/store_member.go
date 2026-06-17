@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/crush/internal/db"
 )
@@ -18,6 +19,7 @@ type MemberStore interface {
 	GetMember(ctx context.Context, tx *sql.Tx, id string) (TeamMember, error)
 	ListMembers(ctx context.Context, tx *sql.Tx, teamID string) ([]TeamMember, error)
 	UpdateMemberCAS(ctx context.Context, tx *sql.Tx, member TeamMember, expectedVersion int) (TeamMember, error)
+	UpdateMemberSession(ctx context.Context, tx *sql.Tx, teamID, memberID, sessionID string) error
 }
 
 type sqlcMemberStore struct {
@@ -65,6 +67,16 @@ func (s *sqlcMemberStore) ListMembers(ctx context.Context, tx *sql.Tx, teamID st
 		out = append(out, toTeamMember(r))
 	}
 	return out, nil
+}
+
+func (s *sqlcMemberStore) UpdateMemberSession(ctx context.Context, tx *sql.Tx, teamID, memberID, sessionID string) error {
+	now := time.Now().UnixMilli()
+	return s.q.WithTx(tx).UpdateMemberSession(ctx, db.UpdateMemberSessionParams{
+		ID:        memberID,
+		TeamID:    teamID,
+		SessionID: sessionID,
+		UpdatedAt: now,
+	})
 }
 
 func (s *sqlcMemberStore) UpdateMemberCAS(ctx context.Context, tx *sql.Tx, m TeamMember, expectedVersion int) (TeamMember, error) {
