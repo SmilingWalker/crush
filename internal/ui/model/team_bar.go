@@ -52,6 +52,7 @@ type TeamBar struct {
 	keyLeft   key.Binding
 	keyRight  key.Binding
 	keyUpDown key.Binding
+	keyEnter  key.Binding
 }
 
 // TeamBarStatus is the cached display data for the team bar.
@@ -71,6 +72,7 @@ func NewTeamBar() *TeamBar {
 		keyLeft:   key.NewBinding(key.WithKeys("left")),
 		keyRight:  key.NewBinding(key.WithKeys("right")),
 		keyUpDown: key.NewBinding(key.WithKeys("up", "down")),
+		keyEnter:  key.NewBinding(key.WithKeys("enter")),
 	}
 	tb.tickCmd = tb.tick()
 	return tb
