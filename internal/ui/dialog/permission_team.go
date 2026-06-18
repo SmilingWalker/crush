@@ -13,21 +13,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/team"
 	"github.com/charmbracelet/crush/internal/ui/common"
 )
-
-// TeamPermissionContext provides team metadata for permission dialogs.
-// It is injected into a Permissions dialog to extend the display with
-// team-specific information (M5 Permission UI).
-type TeamPermissionContext struct {
-	TeamName   string
-	MemberName string
-	MemberRole string
-	TaskTitle  string
-	ToolName   string // informational only — the dialog renders p.permission.ToolName
-	Action     string // informational only
-	Resource   string // informational only
-}
 
 // TeamPermissionButton represents a single action button in the team
 // permission dialog.
@@ -50,7 +38,7 @@ type TeamPermissionDialog struct {
 //
 // It returns a *TeamPermissionDialog that wraps the underlying
 // *Permissions dialog. Callers can use it anywhere a Dialog is expected.
-func NewTeamPermissionDialog(com *common.Common, ctx TeamPermissionContext, perm permission.PermissionRequest, opts ...PermissionsOption) *TeamPermissionDialog {
+func NewTeamPermissionDialog(com *common.Common, ctx team.TeamPermissionContext, perm permission.PermissionRequest, opts ...PermissionsOption) *TeamPermissionDialog {
 	p := NewPermissions(com, perm, opts...)
 	p.teamCtx = &ctx
 	return &TeamPermissionDialog{Permissions: p}
@@ -87,7 +75,7 @@ func (d *TeamPermissionDialog) View() string {
 
 // TeamContext returns the team context associated with this dialog, or nil
 // if this is a standard (non-team) permission dialog.
-func (d *TeamPermissionDialog) TeamContext() *TeamPermissionContext {
+func (d *TeamPermissionDialog) TeamContext() *team.TeamPermissionContext {
 	return d.teamCtx
 }
 
@@ -103,7 +91,7 @@ func DefaultTeamButtons() []TeamPermissionButton {
 // buildTeamHeaderLines builds the team context header lines rendered
 // above the standard permission header. Exported for use by external
 // renderers that need to build team context separately.
-func BuildTeamHeaderLines(ctx TeamPermissionContext) string {
+func BuildTeamHeaderLines(ctx team.TeamPermissionContext) string {
 	var sb strings.Builder
 	sb.WriteString("Team: ")
 	sb.WriteString(ctx.TeamName)

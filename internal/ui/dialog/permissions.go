@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/stringext"
+	"github.com/charmbracelet/crush/internal/team"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -70,7 +71,7 @@ type Permissions struct {
 
 	// teamCtx, when non-nil, extends the dialog with team context
 	// (member name, task title, etc.) for M5 Team Permission UI.
-	teamCtx *TeamPermissionContext
+	teamCtx *team.TeamPermissionContext
 
 	viewport      viewport.Model
 	viewportDirty bool // true when viewport content needs to be re-rendered

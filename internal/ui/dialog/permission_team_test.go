@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/team"
 	"github.com/charmbracelet/crush/internal/ui/common"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -20,7 +21,7 @@ func TestTeamPermissionDialog_RendersTeamContext(t *testing.T) {
 
 	com := common.DefaultCommon(nil)
 
-	ctx := TeamPermissionContext{
+	ctx := team.TeamPermissionContext{
 		TeamName:   "my-team",
 		MemberName: "coder-1",
 		MemberRole: "programmer",
@@ -52,7 +53,7 @@ func TestTeamPermissionDialog_ButtonsAreTeamSpecific(t *testing.T) {
 
 	com := common.DefaultCommon(nil)
 
-	ctx := TeamPermissionContext{
+	ctx := team.TeamPermissionContext{
 		TeamName:   "my-team",
 		MemberName: "coder-1",
 		MemberRole: "programmer",
@@ -107,7 +108,7 @@ func TestTeamPermissionDialog_TeamContext(t *testing.T) {
 
 	com := common.DefaultCommon(nil)
 
-	ctx := TeamPermissionContext{
+	ctx := team.TeamPermissionContext{
 		TeamName:   "test-team",
 		MemberName: "reviewer",
 		MemberRole: "quality-checker",
@@ -138,7 +139,7 @@ func TestTeamPermissionDialog_TaskTitleOptional(t *testing.T) {
 
 	com := common.DefaultCommon(nil)
 
-	ctx := TeamPermissionContext{
+	ctx := team.TeamPermissionContext{
 		TeamName:   "my-team",
 		MemberName: "coder-1",
 		MemberRole: "programmer",
@@ -177,7 +178,7 @@ func TestDefaultTeamButtons(t *testing.T) {
 func TestBuildTeamHeaderLines(t *testing.T) {
 	t.Parallel()
 
-	ctx := TeamPermissionContext{
+	ctx := team.TeamPermissionContext{
 		TeamName:   "my-team",
 		MemberName: "coder-1",
 		MemberRole: "programmer",
@@ -193,7 +194,7 @@ func TestBuildTeamHeaderLines(t *testing.T) {
 func TestBuildTeamHeaderLines_NoTask(t *testing.T) {
 	t.Parallel()
 
-	ctx := TeamPermissionContext{
+	ctx := team.TeamPermissionContext{
 		TeamName:   "my-team",
 		MemberName: "coder-1",
 		MemberRole: "programmer",
