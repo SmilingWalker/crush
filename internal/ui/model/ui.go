@@ -3639,14 +3639,20 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 	// (TeamContextFor false) also covers a team request whose context was
 	// already cleared by the bridge's timeout — in that case the member is
 	// already denied, so falling through to the plain dialog is harmless.
+	var bridgePresent bool
 	if bridge := m.com.Workspace.PermBridge(); bridge != nil {
+		bridgePresent = true
 		if tctx, ok := bridge.TeamContextFor(perm.ID); ok {
+			slog.Debug("perm_dialog: team member request → team dialog",
+				"perm_id", perm.ID, "team", tctx.TeamName, "member", tctx.MemberName, "tool", perm.ToolName)
 			td := dialog.NewTeamPermissionDialog(m.com, *tctx, perm, opts...)
 			m.dialog.OpenDialog(td)
 			return nil
 		}
 	}
 
+	slog.Debug("perm_dialog: plain dialog",
+		"perm_id", perm.ID, "tool", perm.ToolName, "bridge_present", bridgePresent)
 	permDialog := dialog.NewPermissions(m.com, perm, opts...)
 	m.dialog.OpenDialog(permDialog)
 	return nil
