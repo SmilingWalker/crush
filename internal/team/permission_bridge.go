@@ -222,15 +222,16 @@ type PermissionBridge struct {
 	auditFn    PermAuditFunc
 	// pendingRequests tracks requests awaiting UI decision
 	pendingRequests map[string]chan bool // requestID → decision channel
-	pendingMu       sync.Mutex
 	tracker         *ActiveSessionTracker // M5.2: shared singleton, injected via SetActiveSessionTracker
 	// teamContexts holds team display context per pending request, queried by
 	// the TUI to decide whether to render a team permission dialog.
 	teamContexts map[string]*TeamPermissionContext
 	// requestTimeout is how long requestWithUI waits for a UI decision before
-	// denying. Defaults to 30s; overridable for tests.
+	// denying. Defaults to 60s; overridable for tests.
 	requestTimeout time.Duration
 	// --- display coordination (M5.4) ---
+	// queueMu guards pendingRequests, teamContexts, entries, displayFIFO, and
+	// displayed (the entire pending-request state machine).
 	queueMu     sync.Mutex
 	displayFIFO []*pendingEntry             // waiting, not yet shown
 	displayed   *pendingEntry               // the one currently shown (≤1 invariant)
@@ -275,8 +276,8 @@ func (b *PermissionBridge) SetRequestTimeout(d time.Duration) {
 // permission request, if any. The TUI uses this to decide whether to render a
 // team permission dialog (team-specific buttons) or a plain one.
 func (b *PermissionBridge) TeamContextFor(reqID string) (*TeamPermissionContext, bool) {
-	b.pendingMu.Lock()
-	defer b.pendingMu.Unlock()
+	b.queueMu.Lock()
+	defer b.queueMu.Unlock()
 	c, ok := b.teamContexts[reqID]
 	return c, ok
 }
@@ -323,34 +324,31 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 	return b.requestWithUI(ctx, opts, ac)
 }
 
-// requestWithUI publishes a permission request to the inner broker so the TUI
-// opens a dialog, then blocks on a channel until the user decides or the context
-// is cancelled.
+// requestWithUI enqueues a permission request into the display queue and blocks
+// until the user decides (via ResolveRequest), the 60s display timer fires, or
+// the context is cancelled. The timer starts only when the entry becomes the
+// displayed slot (fair timeout).
 func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.CreatePermissionRequest, ac actor.ActorContext) (bool, error) {
 	reqID := opts.ToolCallID
 	if reqID == "" {
 		reqID = uuid.New().String()
 	}
 
-	ch := make(chan bool, 1)
-	// ActorContext carries MemberName/MemberRole (filled by the team runtime);
-	// TaskTitle is left empty here — the dialog omits the Task line when blank.
-	tctx := &TeamPermissionContext{
-		TeamName:   ac.TeamID,
-		MemberName: ac.MemberName,
-		MemberRole: ac.MemberRole,
-		ToolName:   opts.ToolName,
-		Action:     opts.Action,
-		Resource:   opts.Path,
+	entry := &pendingEntry{
+		reqID: reqID,
+		ch:    make(chan bool, 1),
+		tctx: &TeamPermissionContext{
+			TeamName:   ac.TeamID,
+			MemberName: ac.MemberName,
+			MemberRole: ac.MemberRole,
+			ToolName:   opts.ToolName,
+			Action:     opts.Action,
+			Resource:   opts.Path,
+		},
+		opts:      opts,
+		ac:        ac,
+		timeoutCh: make(chan struct{}),
 	}
-	b.pendingMu.Lock()
-	b.pendingRequests[reqID] = ch
-	b.teamContexts[reqID] = tctx
-	b.pendingMu.Unlock()
-
-	slog.Debug("perm_bridge: requestWithUI stored team context",
-		"tool_call_id", reqID, "team", ac.TeamID, "member", ac.MemberName, "role", ac.MemberRole,
-	)
 
 	now := time.Now()
 	teamReq := &PermissionRequest{
@@ -361,77 +359,97 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 		Action:     opts.Action,
 		Status:     "pending",
 		CreatedAt:  now,
-		ExpiresAt:  now.Add(defaultRequestTimeout),
-	}
-	b.queue.Enqueue(ctx, teamReq)
-
-	// Publish to inner's broker so the TUI dialog opens.
-	b.inner.Publish(pubsub.CreatedEvent, permission.PermissionRequest{
-		ID:         reqID,
-		ToolCallID: reqID,
-		ToolName:   opts.ToolName,
-		SessionID:  opts.SessionID,
-		Action:     opts.Action,
-		Path:       opts.Path,
-	})
-	slog.Debug("perm_bridge: published permission request to UI", "tool_call_id", reqID)
-
-	// cleanup removes this request's channel and team context. Idempotent.
-	cleanup := func() {
-		b.pendingMu.Lock()
-		delete(b.pendingRequests, reqID)
-		delete(b.teamContexts, reqID)
-		b.pendingMu.Unlock()
+		ExpiresAt:  now.Add(b.requestTimeout),
 	}
 
-	timer := time.NewTimer(b.requestTimeout)
-	defer timer.Stop()
+	b.queueMu.Lock()
+	b.displayFIFO = append(b.displayFIFO, entry)
+	b.entries[reqID] = entry
+	b.pendingRequests[reqID] = entry.ch
+	b.teamContexts[reqID] = entry.tctx
+	b.queueMu.Unlock()
+
+	_ = b.queue.Enqueue(ctx, teamReq) // FSM queue (5min TTL backstop); ignore full error
+
+	slog.Debug("perm_bridge: requestWithUI enqueued",
+		"tool_call_id", reqID, "team", ac.TeamID, "member", ac.MemberName, "role", ac.MemberRole,
+	)
+
+	b.pumpDisplay()
 
 	select {
 	case <-ctx.Done():
+		b.terminateEntry(reqID)
 		slog.Debug("perm_bridge: request cancelled", "tool_call_id", reqID, "err", ctx.Err())
-		cleanup()
-		b.queue.Dequeue(reqID)
 		return false, ctx.Err()
-	case <-timer.C:
-		// Timeout = denial. ResolveRequest (if it races in later) finds the
-		// entry gone and returns an error without sending; the buffered
-		// channel is discarded.
+	case <-entry.timeoutCh:
+		b.queue.Dequeue(reqID)
 		slog.Debug("perm_bridge: request timed out (deny)", "tool_call_id", reqID)
-		cleanup()
-		b.queue.Dequeue(reqID)
 		return false, nil
-	case allowed := <-ch:
-		// ResolveRequest already deleted the entry before feeding; dequeue only.
-		slog.Debug("perm_bridge: request resolved by UI", "tool_call_id", reqID, "allowed", allowed)
+	case allowed := <-entry.ch:
 		b.queue.Dequeue(reqID)
+		slog.Debug("perm_bridge: request resolved by UI", "tool_call_id", reqID, "allowed", allowed)
 		return allowed, nil
 	}
 }
 
-// ResolveRequest is called by the UI when the user makes a decision on a
-// pending permission request.
-func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope string) error {
-	b.pendingMu.Lock()
-	ch, ok := b.pendingRequests[reqID]
-	if ok {
-		delete(b.pendingRequests, reqID)
-		delete(b.teamContexts, reqID)
-	}
-	b.pendingMu.Unlock()
-
-	slog.Debug("perm_bridge: ResolveRequest",
-		"tool_call_id", reqID, "allowed", allowed, "scope", scope, "found_pending", ok,
-	)
-
+// terminateEntry is the ctx.Done driver: removes the entry from the queue and,
+// if it was the displayed slot, advances the queue. Idempotent. Callers must
+// NOT hold queueMu.
+func (b *PermissionBridge) terminateEntry(reqID string) {
+	b.queueMu.Lock()
+	entry, ok := b.entries[reqID]
 	if !ok {
+		b.queueMu.Unlock()
+		return
+	}
+	wasDisplayed := b.displayed == entry
+	if wasDisplayed {
+		b.displayed = nil
+	}
+	delete(b.entries, reqID)
+	delete(b.pendingRequests, reqID)
+	delete(b.teamContexts, reqID)
+	removeFromFIFO(b, reqID)
+	b.queueMu.Unlock()
+
+	if wasDisplayed {
+		b.pumpDisplay()
+	}
+}
+
+// ResolveRequest is called by the UI when the user decides a pending request.
+// It terminates the entry, advances the queue if it was displayed, and feeds
+// the decision to the blocking goroutine. Returns an error if the entry was
+// already terminated (resolved/timed out/cancelled).
+func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope string) error {
+	b.queueMu.Lock()
+	entry, ok := b.entries[reqID]
+	if !ok {
+		b.queueMu.Unlock()
+		slog.Debug("perm_bridge: ResolveRequest not pending", "tool_call_id", reqID)
 		return fmt.Errorf("request not pending: %s", reqID)
 	}
+	wasDisplayed := b.displayed == entry
+	if wasDisplayed {
+		b.displayed = nil
+	}
+	delete(b.entries, reqID)
+	delete(b.pendingRequests, reqID)
+	delete(b.teamContexts, reqID)
+	removeFromFIFO(b, reqID)
+	b.queueMu.Unlock()
 
-	// Dequeue from the permission queue to stop the expiry timer.
+	if wasDisplayed {
+		b.pumpDisplay()
+	}
 	b.queue.Dequeue(reqID)
 
-	ch <- allowed
+	slog.Debug("perm_bridge: ResolveRequest",
+		"tool_call_id", reqID, "allowed", allowed, "scope", scope, "was_displayed", wasDisplayed,
+	)
+
+	entry.ch <- allowed // buffered, size 1 — never blocks
 	return nil
 }
 
