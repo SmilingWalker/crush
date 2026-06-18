@@ -35,6 +35,10 @@ const (
 	PermAuditLateResponse        PermAuditAction = "late_response"
 )
 
+// defaultRequestTimeout is how long requestWithUI waits for a UI decision
+// before denying. It also sets the PermissionRequest.ExpiresAt window.
+const defaultRequestTimeout = 30 * time.Second
+
 // PermAuditEvent records a permission-related event for the audit trail.
 type PermAuditEvent struct {
 	Action    PermAuditAction
@@ -223,7 +227,7 @@ func NewPermissionBridge(inner permission.Service) *PermissionBridge {
 		auditFn:         func(ctx context.Context, event PermAuditEvent) {}, // no-op default
 		pendingRequests: make(map[string]chan bool),
 		teamContexts:    make(map[string]*TeamPermissionContext),
-		requestTimeout:  30 * time.Second,
+		requestTimeout:  defaultRequestTimeout,
 	}
 	fsm := NewPermissionFSM(bridge.store, bridge.grantStore, bridge.auditFn)
 	bridge.queue = NewPermissionQueue(fsm)
@@ -328,7 +332,7 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 		Action:     opts.Action,
 		Status:     "pending",
 		CreatedAt:  now,
-		ExpiresAt:  now.Add(30 * time.Second),
+		ExpiresAt:  now.Add(defaultRequestTimeout),
 	}
 	b.queue.Enqueue(ctx, teamReq)
 
@@ -359,8 +363,9 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 		b.queue.Dequeue(reqID)
 		return false, ctx.Err()
 	case <-timer.C:
-		// Timeout = denial. ResolveRequest (if it races in later) will find
-		// the entry gone and no-op; the buffered channel is discarded.
+		// Timeout = denial. ResolveRequest (if it races in later) finds the
+		// entry gone and returns an error without sending; the buffered
+		// channel is discarded.
 		cleanup()
 		b.queue.Dequeue(reqID)
 		return false, nil
