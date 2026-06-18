@@ -177,6 +177,55 @@ func TestPermissionBridge_AutoDenyWhenNotSkipRequests(t *testing.T) {
 	assert.False(t, allowed, "team session without SkipRequests should auto-deny")
 }
 
+// TestPermissionBridge_AlwaysShowNotActiveSession verifies that a team member's
+// request routes through requestWithUI (and can be resolved by the UI) even when
+// the active-session tracker points at a DIFFERENT member. The IsActiveSession
+// gate is gone.
+func TestPermissionBridge_AlwaysShowNotActiveSession(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(5 * time.Second)
+
+	// Active session is a DIFFERENT member than the one making the request.
+	tracker := NewActiveSessionTracker()
+	tracker.SetSession("s-other", "member-other")
+	bridge.SetActiveSessionTracker(tracker)
+
+	ac := actor.ActorContext{
+		SessionID: "s-ask", TeamID: "team-1", MemberID: "member-ask",
+		MemberName: "asker", MemberRole: "programmer",
+	}
+	ctx := ac.WithContext(t.Context())
+
+	resCh := make(chan bool, 1)
+	go func() {
+		allowed, _ := bridge.Request(ctx, permission.CreatePermissionRequest{
+			SessionID: "s-ask", ToolCallID: "tc-always", ToolName: "write",
+			Action: "write", Description: "test", Path: "/tmp/x",
+		})
+		resCh <- allowed
+	}()
+
+	// The request must reach requestWithUI: TeamContextFor becomes available.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := bridge.TeamContextFor("tc-always"); ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, visible := bridge.TeamContextFor("tc-always")
+	require.True(t, visible, "request should route to requestWithUI despite non-matching active session")
+
+	require.NoError(t, bridge.ResolveRequest("tc-always", true, "call"))
+	select {
+	case allowed := <-resCh:
+		assert.True(t, allowed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Request did not return")
+	}
+}
+
 // TestPermissionBridge_PublishDelegatesToInner verifies that Publish on the
 // bridge delegates to inner.Publish, enabling team permission requests to
 // reach the UI event stream.

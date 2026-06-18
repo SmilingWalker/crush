@@ -313,19 +313,14 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 		return true, nil
 	}
 
-	// Team session — check if user is viewing this member (by session ID or member ID).
-	if b.tracker != nil && b.tracker.IsActiveSession(opts.SessionID, ac.MemberID) {
-		slog.Debug("perm_bridge: active session matches → requestWithUI", "tool_call_id", opts.ToolCallID, "session_id", opts.SessionID, "member_id", ac.MemberID)
-		return b.requestWithUI(ctx, opts, ac)
-	}
-
-	// User is viewing another session — SkipRequests gate.
+	// Team session — yolo (SkipRequests) auto-allows, bypassing the UI.
 	if b.inner.SkipRequests() {
-		slog.Debug("perm_bridge: not active view, SkipRequests=true (auto-allow)", "tool_call_id", opts.ToolCallID)
+		slog.Debug("perm_bridge: team SkipRequests=true (auto-allow)", "tool_call_id", opts.ToolCallID)
 		return true, nil
 	}
-	slog.Debug("perm_bridge: not active view, SkipRequests=false (deny)", "tool_call_id", opts.ToolCallID)
-	return false, nil
+	// Otherwise always show a popup regardless of focused session (M5.4).
+	slog.Debug("perm_bridge: team → requestWithUI (always show)", "tool_call_id", opts.ToolCallID, "session_id", opts.SessionID, "member_id", ac.MemberID)
+	return b.requestWithUI(ctx, opts, ac)
 }
 
 // requestWithUI publishes a permission request to the inner broker so the TUI
