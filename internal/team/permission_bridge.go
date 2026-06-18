@@ -10,6 +10,7 @@ package team
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -272,13 +273,20 @@ func (b *PermissionBridge) GetQueue() *PermissionQueue {
 // it shows a permission dialog; otherwise it uses the SkipRequests gate.
 func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePermissionRequest) (bool, error) {
 	ac, hasTeam := actor.FromContext(ctx)
+	slog.Debug("perm_bridge: request",
+		"team_id", ac.TeamID, "member_id", ac.MemberID, "session_id", opts.SessionID,
+		"tool", opts.ToolName, "action", opts.Action, "tool_call_id", opts.ToolCallID,
+		"has_team", hasTeam, "tracker_set", b.tracker != nil,
+	)
 	if !hasTeam || ac.TeamID == "" || ac.MemberID == "" {
 		// Non-team session — delegate to inner (leader normal flow).
+		slog.Debug("perm_bridge: non-team delegate to inner", "tool_call_id", opts.ToolCallID)
 		return b.inner.Request(ctx, opts)
 	}
 
 	// Check existing grants first (call scope).
 	if grant, ok := b.grantStore.FindActiveGrant(ctx, opts.SessionID, opts.ToolName, opts.Action); ok {
+		slog.Debug("perm_bridge: active grant found (auto-allow)", "tool_call_id", opts.ToolCallID, "scope", grant.Scope)
 		b.auditFn(ctx, PermAuditEvent{
 			Action: PermAuditGrantAuto, TeamID: ac.TeamID, MemberID: ac.MemberID,
 			ToolName: opts.ToolName, Decision: "allowed", Scope: grant.Scope, Timestamp: time.Now(),
@@ -288,13 +296,16 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 
 	// Team session — check if user is viewing this member (by session ID or member ID).
 	if b.tracker != nil && b.tracker.IsActiveSession(opts.SessionID, ac.MemberID) {
+		slog.Debug("perm_bridge: active session matches → requestWithUI", "tool_call_id", opts.ToolCallID, "session_id", opts.SessionID, "member_id", ac.MemberID)
 		return b.requestWithUI(ctx, opts, ac)
 	}
 
 	// User is viewing another session — SkipRequests gate.
 	if b.inner.SkipRequests() {
+		slog.Debug("perm_bridge: not active view, SkipRequests=true (auto-allow)", "tool_call_id", opts.ToolCallID)
 		return true, nil
 	}
+	slog.Debug("perm_bridge: not active view, SkipRequests=false (deny)", "tool_call_id", opts.ToolCallID)
 	return false, nil
 }
 
@@ -323,6 +334,10 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 	b.teamContexts[reqID] = tctx
 	b.pendingMu.Unlock()
 
+	slog.Debug("perm_bridge: requestWithUI stored team context",
+		"tool_call_id", reqID, "team", ac.TeamID, "member", ac.MemberName, "role", ac.MemberRole,
+	)
+
 	now := time.Now()
 	teamReq := &PermissionRequest{
 		ID:         reqID,
@@ -345,6 +360,7 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 		Action:     opts.Action,
 		Path:       opts.Path,
 	})
+	slog.Debug("perm_bridge: published permission request to UI", "tool_call_id", reqID)
 
 	// cleanup removes this request's channel and team context. Idempotent.
 	cleanup := func() {
@@ -359,6 +375,7 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 
 	select {
 	case <-ctx.Done():
+		slog.Debug("perm_bridge: request cancelled", "tool_call_id", reqID, "err", ctx.Err())
 		cleanup()
 		b.queue.Dequeue(reqID)
 		return false, ctx.Err()
@@ -366,11 +383,13 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 		// Timeout = denial. ResolveRequest (if it races in later) finds the
 		// entry gone and returns an error without sending; the buffered
 		// channel is discarded.
+		slog.Debug("perm_bridge: request timed out (deny)", "tool_call_id", reqID)
 		cleanup()
 		b.queue.Dequeue(reqID)
 		return false, nil
 	case allowed := <-ch:
 		// ResolveRequest already deleted the entry before feeding; dequeue only.
+		slog.Debug("perm_bridge: request resolved by UI", "tool_call_id", reqID, "allowed", allowed)
 		b.queue.Dequeue(reqID)
 		return allowed, nil
 	}
@@ -386,6 +405,10 @@ func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope stri
 		delete(b.teamContexts, reqID)
 	}
 	b.pendingMu.Unlock()
+
+	slog.Debug("perm_bridge: ResolveRequest",
+		"tool_call_id", reqID, "allowed", allowed, "scope", scope, "found_pending", ok,
+	)
 
 	if !ok {
 		return fmt.Errorf("request not pending: %s", reqID)

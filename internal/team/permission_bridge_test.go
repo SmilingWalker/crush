@@ -2,6 +2,10 @@ package team
 
 import (
 	"context"
+	"io"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +15,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newSyncWriter returns an io.Writer that appends each Write to *lines under mu.
+func newSyncWriter(mu *sync.Mutex, lines *[]string) io.Writer {
+	return &syncWriter{mu: mu, lines: lines}
+}
+
+type syncWriter struct {
+	mu    *sync.Mutex
+	lines *[]string
+}
+
+func (w *syncWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	*w.lines = append(*w.lines, string(p))
+	return len(p), nil
+}
 
 func TestGrantStore_FindActiveGrant(t *testing.T) {
 	gs := NewGrantStore()
@@ -334,4 +355,68 @@ func TestPermissionBridge_CtxCancelDeniesAndCleansUp(t *testing.T) {
 
 	_, ok := bridge.TeamContextFor("tc-cc-1")
 	assert.False(t, ok, "team context should be cleared after cancel")
+}
+
+// TestPermissionBridge_TraceLogging verifies the permission decision trace is
+// emitted at slog.Debug level for the full member round-trip.
+func TestPermissionBridge_TraceLogging(t *testing.T) {
+	// Capture slog output via an in-memory handler at Debug level.
+	var mu sync.Mutex
+	var lines []string
+	h := slog.NewTextHandler(newSyncWriter(&mu, &lines), &slog.HandlerOptions{Level: slog.LevelDebug})
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(5 * time.Second)
+
+	tracker := NewActiveSessionTracker()
+	tracker.SetSession("s-trace", "member-trace")
+	bridge.SetActiveSessionTracker(tracker)
+
+	ac := actor.ActorContext{
+		SessionID: "s-trace", TeamID: "team-trace", MemberID: "member-trace",
+		MemberName: "tracer", MemberRole: "programmer",
+	}
+	ctx := ac.WithContext(t.Context())
+
+	resCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.Request(ctx, permission.CreatePermissionRequest{
+			SessionID: "s-trace", ToolCallID: "tc-trace", ToolName: "write",
+			Action: "write", Description: "test", Path: "/tmp/x",
+		})
+		resCh <- err
+	}()
+
+	// Wait for the context to be stored, then resolve.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := bridge.TeamContextFor("tc-trace"); ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.NoError(t, bridge.ResolveRequest("tc-trace", true, "call"))
+	select {
+	case <-resCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Request did not return")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"perm_bridge: request",
+		"perm_bridge: active session matches",
+		"perm_bridge: requestWithUI stored team context",
+		"perm_bridge: published permission request to UI",
+		"perm_bridge: ResolveRequest",
+		"perm_bridge: request resolved by UI",
+	} {
+		require.Contains(t, joined, want, "missing trace line: %s", want)
+	}
 }
