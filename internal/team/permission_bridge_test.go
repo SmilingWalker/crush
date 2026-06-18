@@ -628,3 +628,109 @@ func TestPermissionBridge_FairTimeout(t *testing.T) {
 		t.Fatal("second request did not return")
 	}
 }
+
+// TestPermissionBridge_LateResolveNoOp verifies that resolving an already-
+// timed-out request returns an error and does not panic.
+func TestPermissionBridge_LateResolveNoOp(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(40 * time.Millisecond)
+
+	ac := actor.ActorContext{
+		SessionID: "s-late", TeamID: "team-l", MemberID: "m-l",
+		MemberName: "m", MemberRole: "programmer",
+	}
+	ctx := ac.WithContext(t.Context())
+
+	done := make(chan bool, 1)
+	go func() {
+		allowed, _ := bridge.Request(ctx, permission.CreatePermissionRequest{
+			SessionID: "s-late", ToolCallID: "tc-late", ToolName: "write",
+			Action: "write", Description: "test", Path: "/tmp/x",
+		})
+		done <- allowed
+	}()
+
+	// Wait for timeout.
+	select {
+	case allowed := <-done:
+		assert.False(t, allowed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not time out")
+	}
+
+	// Late resolve: error, no panic.
+	err := bridge.ResolveRequest("tc-late", true, "call")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not pending")
+}
+
+// TestPermissionBridge_CtxCancelAdvancesQueue verifies that cancelling a
+// displayed request's context removes it and promotes the next waiting request.
+func TestPermissionBridge_CtxCancelAdvancesQueue(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(5 * time.Second)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events := inner.Subscribe(ctx)
+	nextEvent := func(timeout time.Duration) string {
+		select {
+		case ev := <-events:
+			return ev.Payload.ID
+		case <-time.After(timeout):
+			return ""
+		}
+	}
+
+	ctx1, cancel1 := context.WithCancel(t.Context())
+	defer cancel1()
+	ac1 := actor.ActorContext{SessionID: "s-c", TeamID: "team-c", MemberID: "m1",
+		MemberName: "m1", MemberRole: "programmer"}
+	ctx1 = ac1.WithContext(ctx1)
+
+	r1 := make(chan error, 1)
+	go func() {
+		_, err := bridge.Request(ctx1, permission.CreatePermissionRequest{
+			SessionID: "s-c", ToolCallID: "tc-c1", ToolName: "write",
+			Action: "write", Description: "test", Path: "/tmp/x",
+		})
+		r1 <- err
+	}()
+
+	// Wait for first displayed.
+	require.Equal(t, "tc-c1", nextEvent(2*time.Second), "first should be displayed")
+
+	// Enqueue a second (waits in FIFO).
+	ac2 := actor.ActorContext{SessionID: "s-c", TeamID: "team-c", MemberID: "m2",
+		MemberName: "m2", MemberRole: "programmer"}
+	ctx2 := ac2.WithContext(t.Context())
+	r2 := make(chan bool, 1)
+	go func() {
+		allowed, _ := bridge.Request(ctx2, permission.CreatePermissionRequest{
+			SessionID: "s-c", ToolCallID: "tc-c2", ToolName: "write",
+			Action: "write", Description: "test", Path: "/tmp/x",
+		})
+		r2 <- allowed
+	}()
+	// Second should still be waiting.
+	assert.Equal(t, "", nextEvent(50*time.Millisecond), "second should wait")
+
+	cancel1()
+	select {
+	case err := <-r1:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("first did not return on cancel")
+	}
+
+	// Second should now be promoted to displayed.
+	require.Equal(t, "tc-c2", nextEvent(2*time.Second), "second should be promoted after cancel")
+	require.NoError(t, bridge.ResolveRequest("tc-c2", true, "call"))
+	select {
+	case <-r2:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second did not return")
+	}
+}
