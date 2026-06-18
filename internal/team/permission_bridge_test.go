@@ -560,3 +560,71 @@ func TestPermissionBridge_SequentialQueue(t *testing.T) {
 		t.Fatal("second request did not return")
 	}
 }
+
+// TestPermissionBridge_FairTimeout verifies the display timer starts at DISPLAY,
+// not at enqueue. Two requests queued; the displayed one times out and advances
+// the queue; the second (which was waiting, no timer) then becomes displayable
+// and can be resolved normally — proving it did not expire while waiting.
+func TestPermissionBridge_FairTimeout(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(200 * time.Millisecond) // short display timer
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events := inner.Subscribe(ctx)
+	nextEvent := func(timeout time.Duration) string {
+		select {
+		case ev := <-events:
+			return ev.Payload.ID
+		case <-time.After(timeout):
+			return ""
+		}
+	}
+
+	mkReq := func(reqID string) <-chan bool {
+		ac := actor.ActorContext{
+			SessionID: "s-ft", TeamID: "team-ft", MemberID: "m-ft",
+			MemberName: "m", MemberRole: "programmer",
+		}
+		rctx := ac.WithContext(t.Context())
+		resCh := make(chan bool, 1)
+		go func() {
+			allowed, _ := bridge.Request(rctx, permission.CreatePermissionRequest{
+				SessionID: "s-ft", ToolCallID: reqID, ToolName: "write",
+				Action: "write", Description: "test", Path: "/tmp/x",
+			})
+			resCh <- allowed
+		}()
+		return resCh
+	}
+
+	r1 := mkReq("tc-ft1")
+	require.Equal(t, "tc-ft1", nextEvent(2*time.Second), "first should be displayed")
+
+	// Enqueue the second while the first is displayed (waiting, no timer).
+	r2 := mkReq("tc-ft2")
+	// Wait window is well under the 200ms timer, so the first is still displayed
+	// and the second must still be waiting (not yet published).
+	assert.Equal(t, "", nextEvent(50*time.Millisecond), "second should wait")
+
+	// First times out (denied) after ~80ms. Wait notably longer than the timer
+	// so the timeout surely fired and advanced the queue.
+	select {
+	case allowed := <-r1:
+		assert.False(t, allowed, "first (displayed) should time out and deny")
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not time out")
+	}
+
+	// After the first times out, the second is promoted to displayed and can be
+	// resolved by the UI — proving it did not expire while waiting.
+	require.Equal(t, "tc-ft2", nextEvent(2*time.Second), "second should be promoted after first timeout")
+	require.NoError(t, bridge.ResolveRequest("tc-ft2", true, "call"))
+	select {
+	case allowed := <-r2:
+		assert.True(t, allowed, "second should resolve (no premature timeout while waiting)")
+	case <-time.After(2 * time.Second):
+		t.Fatal("second request did not return")
+	}
+}
