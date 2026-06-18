@@ -6,7 +6,10 @@
 // internal/ui/team already imports internal/team (for domain types).
 package team
 
-import "sync"
+import (
+	"log/slog"
+	"sync"
+)
 
 // ActiveSessionTracker is a concurrency-safe holder for the currently active
 // session and member in the TUI. PermissionBridge uses this to decide whether
@@ -28,6 +31,7 @@ func (t *ActiveSessionTracker) SetSession(sid, mid string) {
 	defer t.mu.Unlock()
 	t.sessionID = sid
 	t.memberID = mid
+	slog.Debug("active_session: set", "session_id", sid, "member_id", mid)
 }
 
 // IsActiveSession returns true if the given session or member matches the
@@ -36,11 +40,16 @@ func (t *ActiveSessionTracker) SetSession(sid, mid string) {
 func (t *ActiveSessionTracker) IsActiveSession(sessionID, memberID string) bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	var match string
 	if t.sessionID != "" && t.sessionID == sessionID {
-		return true
+		match = "session"
+	} else if t.memberID != "" && t.memberID == memberID {
+		match = "member"
 	}
-	if t.memberID != "" && t.memberID == memberID {
-		return true
-	}
-	return false
+	slog.Debug("active_session: check",
+		"query_session", sessionID, "query_member", memberID,
+		"active_session", t.sessionID, "active_member", t.memberID,
+		"matched", match != "", "match_by", match,
+	)
+	return match != ""
 }
