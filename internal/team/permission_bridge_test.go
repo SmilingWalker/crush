@@ -179,3 +179,75 @@ func TestPermissionBridge_PublishDelegatesToInner(t *testing.T) {
 		t.Fatal("timed out waiting for published event")
 	}
 }
+
+// TestPermissionBridge_StoresAndClearsTeamContext verifies that when a team
+// session is the active view, Request routes through requestWithUI, stores a
+// TeamPermissionContext under the request ID, and clears it once resolved.
+func TestPermissionBridge_StoresAndClearsTeamContext(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(5 * time.Second) // generous; we resolve promptly
+
+	tracker := NewActiveSessionTracker()
+	tracker.SetSession("s-active", "member-1")
+	bridge.SetActiveSessionTracker(tracker)
+
+	ac := actor.ActorContext{
+		SessionID: "s-active", TeamID: "team-1", MemberID: "member-1",
+		MemberName: "coder-1", MemberRole: "programmer",
+	}
+	ctx := ac.WithContext(t.Context())
+
+	opts := permission.CreatePermissionRequest{
+		SessionID: "s-active", ToolCallID: "tc-ctx-1", ToolName: "bash",
+		Action: "run", Description: "test", Path: ".",
+	}
+
+	type result struct {
+		allowed bool
+		err     error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		allowed, err := bridge.Request(ctx, opts)
+		resCh <- result{allowed, err}
+	}()
+
+	// Poll until the bridge has stored the team context (stored before publish/block).
+	deadline := time.Now().Add(2 * time.Second)
+	var tctx *TeamPermissionContext
+	for time.Now().Before(deadline) {
+		if c, ok := bridge.TeamContextFor("tc-ctx-1"); ok {
+			tctx = c
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.NotNil(t, tctx, "team context should be stored while request is pending")
+	assert.Equal(t, "team-1", tctx.TeamName)
+	assert.Equal(t, "coder-1", tctx.MemberName)
+	assert.Equal(t, "programmer", tctx.MemberRole)
+
+	// Resolve from the "UI".
+	require.NoError(t, bridge.ResolveRequest("tc-ctx-1", true, "call"))
+
+	select {
+	case r := <-resCh:
+		require.NoError(t, r.err)
+		assert.True(t, r.allowed, "resolved-allow should return true")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Request did not return after ResolveRequest")
+	}
+
+	// Context must be cleared after resolution.
+	_, ok := bridge.TeamContextFor("tc-ctx-1")
+	assert.False(t, ok, "team context should be cleared after resolve")
+}
+
+// TestPermissionBridge_TeamContextFor_NotFound verifies the accessor returns
+// false for an unknown request ID.
+func TestPermissionBridge_TeamContextFor_NotFound(t *testing.T) {
+	bridge := NewPermissionBridge(nil)
+	_, ok := bridge.TeamContextFor("nope")
+	assert.False(t, ok)
+}

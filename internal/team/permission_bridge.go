@@ -206,6 +206,12 @@ type PermissionBridge struct {
 	pendingRequests map[string]chan bool // requestID → decision channel
 	pendingMu       sync.Mutex
 	tracker         *ActiveSessionTracker // M5.2: shared singleton, injected via SetActiveSessionTracker
+	// teamContexts holds team display context per pending request, queried by
+	// the TUI to decide whether to render a team permission dialog.
+	teamContexts map[string]*TeamPermissionContext
+	// requestTimeout is how long requestWithUI waits for a UI decision before
+	// denying. Defaults to 30s; overridable for tests.
+	requestTimeout time.Duration
 }
 
 // NewPermissionBridge creates a PermissionBridge wrapping the given permission.Service.
@@ -216,6 +222,8 @@ func NewPermissionBridge(inner permission.Service) *PermissionBridge {
 		grantStore:      NewGrantStore(),
 		auditFn:         func(ctx context.Context, event PermAuditEvent) {}, // no-op default
 		pendingRequests: make(map[string]chan bool),
+		teamContexts:    make(map[string]*TeamPermissionContext),
+		requestTimeout:  30 * time.Second,
 	}
 	fsm := NewPermissionFSM(bridge.store, bridge.grantStore, bridge.auditFn)
 	bridge.queue = NewPermissionQueue(fsm)
@@ -231,6 +239,22 @@ func (b *PermissionBridge) SetAuditFunc(fn PermAuditFunc) {
 // Must be called before any team member tool calls. Caller owns the tracker lifecycle.
 func (b *PermissionBridge) SetActiveSessionTracker(t *ActiveSessionTracker) {
 	b.tracker = t
+}
+
+// SetRequestTimeout overrides how long requestWithUI waits for a UI decision
+// before denying. Intended for tests.
+func (b *PermissionBridge) SetRequestTimeout(d time.Duration) {
+	b.requestTimeout = d
+}
+
+// TeamContextFor returns the team display context associated with a pending
+// permission request, if any. The TUI uses this to decide whether to render a
+// team permission dialog (team-specific buttons) or a plain one.
+func (b *PermissionBridge) TeamContextFor(reqID string) (*TeamPermissionContext, bool) {
+	b.pendingMu.Lock()
+	defer b.pendingMu.Unlock()
+	c, ok := b.teamContexts[reqID]
+	return c, ok
 }
 
 // GetQueue returns the PermissionQueue for external access.
@@ -280,8 +304,19 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 	}
 
 	ch := make(chan bool, 1)
+	// ActorContext carries MemberName/MemberRole (filled by the team runtime);
+	// TaskTitle is left empty here — the dialog omits the Task line when blank.
+	tctx := &TeamPermissionContext{
+		TeamName:   ac.TeamID,
+		MemberName: ac.MemberName,
+		MemberRole: ac.MemberRole,
+		ToolName:   opts.ToolName,
+		Action:     opts.Action,
+		Resource:   opts.Path,
+	}
 	b.pendingMu.Lock()
 	b.pendingRequests[reqID] = ch
+	b.teamContexts[reqID] = tctx
 	b.pendingMu.Unlock()
 
 	now := time.Now()
@@ -307,14 +342,30 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 		Path:       opts.Path,
 	})
 
-	select {
-	case <-ctx.Done():
+	// cleanup removes this request's channel and team context. Idempotent.
+	cleanup := func() {
 		b.pendingMu.Lock()
 		delete(b.pendingRequests, reqID)
+		delete(b.teamContexts, reqID)
 		b.pendingMu.Unlock()
+	}
+
+	timer := time.NewTimer(b.requestTimeout)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		cleanup()
 		b.queue.Dequeue(reqID)
 		return false, ctx.Err()
+	case <-timer.C:
+		// Timeout = denial. ResolveRequest (if it races in later) will find
+		// the entry gone and no-op; the buffered channel is discarded.
+		cleanup()
+		b.queue.Dequeue(reqID)
+		return false, nil
 	case allowed := <-ch:
+		// ResolveRequest already deleted the entry before feeding; dequeue only.
 		b.queue.Dequeue(reqID)
 		return allowed, nil
 	}
@@ -327,6 +378,7 @@ func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope stri
 	ch, ok := b.pendingRequests[reqID]
 	if ok {
 		delete(b.pendingRequests, reqID)
+		delete(b.teamContexts, reqID)
 	}
 	b.pendingMu.Unlock()
 
