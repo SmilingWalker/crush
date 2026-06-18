@@ -117,6 +117,11 @@ type Workspace interface {
 	// false denies. scope is "call" (Allow Once) or "task" (Allow for Task).
 	PermBridgeResolve(reqID string, allowed bool, scope string) error
 
+	// PermBridge returns the M5 PermissionBridge, or nil if team mode is not
+	// configured (e.g. client mode). The TUI uses it to look up team display
+	// context for member permission dialogs.
+	PermBridge() *team.PermissionBridge
+
 	// Questions
 	QuestionsAnswer(res questions.QuestionsResponse)
 

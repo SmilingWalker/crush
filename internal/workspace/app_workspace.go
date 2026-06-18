@@ -226,6 +226,11 @@ func (w *AppWorkspace) PermBridgeResolve(reqID string, allowed bool, scope strin
 	return nil
 }
 
+// PermBridge returns the M5 PermissionBridge, or nil if not configured.
+func (w *AppWorkspace) PermBridge() *team.PermissionBridge {
+	return w.app.PermBridge()
+}
+
 func (w *AppWorkspace) PermissionSkipRequests() bool {
 	return w.app.Permissions.SkipRequests()
 }

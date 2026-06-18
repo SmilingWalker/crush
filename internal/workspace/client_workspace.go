@@ -320,6 +320,12 @@ func (w *ClientWorkspace) PermBridgeResolve(_ string, _ bool, _ string) error {
 	return fmt.Errorf("team permission bridge not available in client mode")
 }
 
+// PermBridge returns nil in client mode — the team permission bridge is not
+// available remotely.
+func (w *ClientWorkspace) PermBridge() *team.PermissionBridge {
+	return nil
+}
+
 func (w *ClientWorkspace) PermissionSkipRequests() bool {
 	skip, err := w.client.GetPermissionsSkipRequests(context.Background(), w.workspaceID())
 	if err != nil {
