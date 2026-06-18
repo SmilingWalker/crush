@@ -3633,6 +3633,17 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 		opts = append(opts, dialog.WithDiffMode(diffMode == "split"))
 	}
 
+	// M5.3: if this request originated from a team member, render the team
+	// dialog (team-specific buttons → PermBridgeResolve → ResolveRequest).
+	// Otherwise render the standard dialog (inner Grant/Deny path).
+	if bridge := m.com.Workspace.PermBridge(); bridge != nil {
+		if tctx, ok := bridge.TeamContextFor(perm.ID); ok {
+			td := dialog.NewTeamPermissionDialog(m.com, *tctx, perm, opts...)
+			m.dialog.OpenDialog(td)
+			return nil
+		}
+	}
+
 	permDialog := dialog.NewPermissions(m.com, perm, opts...)
 	m.dialog.OpenDialog(permDialog)
 	return nil
