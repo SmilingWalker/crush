@@ -144,7 +144,6 @@ type pendingEntry struct {
 	opts      permission.CreatePermissionRequest
 	ac        actor.ActorContext
 	timeoutCh chan struct{}              // closed when the 60s display-timer fires
-	timer     *time.Timer                // nil until promoted to displayed
 }
 
 // PermissionStore manages in-memory permission requests.
@@ -383,11 +382,11 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 		slog.Debug("perm_bridge: request cancelled", "tool_call_id", reqID, "err", ctx.Err())
 		return false, ctx.Err()
 	case <-entry.timeoutCh:
-		b.queue.Dequeue(reqID)
+		// handleTimeout already dequeued from the FSM queue.
 		slog.Debug("perm_bridge: request timed out (deny)", "tool_call_id", reqID)
 		return false, nil
 	case allowed := <-entry.ch:
-		b.queue.Dequeue(reqID)
+		// ResolveRequest already dequeued from the FSM queue.
 		slog.Debug("perm_bridge: request resolved by UI", "tool_call_id", reqID, "allowed", allowed)
 		return allowed, nil
 	}
@@ -416,6 +415,7 @@ func (b *PermissionBridge) terminateEntry(reqID string) {
 	if wasDisplayed {
 		b.pumpDisplay()
 	}
+	b.queue.Dequeue(reqID)
 }
 
 // ResolveRequest is called by the UI when the user decides a pending request.
@@ -470,15 +470,18 @@ func (b *PermissionBridge) pumpDisplay() {
 	b.displayFIFO = b.displayFIFO[1:]
 	b.displayed = entry
 	reqID := entry.reqID
-	b.queueMu.Unlock()
-
 	// Arm the display timer (60s by default). handleTimeout clears the slot and
-	// wakes the blocking goroutine via timeoutCh.
-	entry.timer = time.AfterFunc(b.requestTimeout, func() {
+	// wakes the blocking goroutine via timeoutCh. Fire-and-forget: a late fire
+	// after the entry is already terminated is a no-op (handleTimeout's
+	// entries[reqID] membership guard).
+	time.AfterFunc(b.requestTimeout, func() {
 		b.handleTimeout(reqID)
 	})
-
-	// Publish to the inner broker so the TUI opens the dialog.
+	// Publish to the inner broker so the TUI opens the dialog. Done UNDER the
+	// lock so a concurrent terminal handler cannot terminate this entry between
+	// the displayed-slot assignment and the Publish — that would Publish a stale
+	// entry and violate the ≤1-displayed invariant. inner.Publish is a
+	// non-blocking channel send, safe to call while holding queueMu.
 	b.inner.Publish(pubsub.CreatedEvent, permission.PermissionRequest{
 		ID:         reqID,
 		ToolCallID: reqID,
@@ -487,13 +490,11 @@ func (b *PermissionBridge) pumpDisplay() {
 		Action:     entry.opts.Action,
 		Path:       entry.opts.Path,
 	})
-	fifoRemaining := func() int {
-		b.queueMu.Lock()
-		defer b.queueMu.Unlock()
-		return len(b.displayFIFO)
-	}
+	fifoRemaining := len(b.displayFIFO)
+	b.queueMu.Unlock()
+
 	slog.Debug("perm_bridge: pumpDisplay published",
-		"tool_call_id", reqID, "fifo_remaining", fifoRemaining(),
+		"tool_call_id", reqID, "fifo_remaining", fifoRemaining,
 	)
 }
 
@@ -520,6 +521,7 @@ func (b *PermissionBridge) handleTimeout(reqID string) {
 	if wasDisplayed {
 		b.pumpDisplay()
 	}
+	b.queue.Dequeue(reqID)
 	close(entry.timeoutCh)
 }
 
