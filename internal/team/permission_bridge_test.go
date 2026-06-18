@@ -158,23 +158,44 @@ func TestPermissionBridge_AutoAllowWhenSkipRequests(t *testing.T) {
 	assert.True(t, allowed, "team session with SkipRequests should auto-allow")
 }
 
-// TestPermissionBridge_AutoDenyWhenNotSkipRequests verifies that team sessions
-// auto-deny tool calls when SkipRequests (yolo mode) is disabled.
-func TestPermissionBridge_AutoDenyWhenNotSkipRequests(t *testing.T) {
+// TestPermissionBridge_TeamSessionShowsPopupWhenSkipOff verifies that a team
+// session with SkipRequests=false routes through requestWithUI (shows a popup)
+// rather than auto-denying. Resolve from the UI returns the decision.
+func TestPermissionBridge_TeamSessionShowsPopupWhenSkipOff(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil) // skip=false
 	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(5 * time.Second)
 
-	ac := actor.ActorContext{
-		SessionID: "s1", TeamID: "team-1", MemberID: "member-1",
-	}
+	ac := actor.ActorContext{SessionID: "s1", TeamID: "team-1", MemberID: "member-1"}
 	ctx := ac.WithContext(t.Context())
 
-	allowed, err := bridge.Request(ctx, permission.CreatePermissionRequest{
-		SessionID: "s1", ToolCallID: "tc-2", ToolName: "bash",
-		Action: "run", Description: "test", Path: ".",
-	})
-	require.NoError(t, err)
-	assert.False(t, allowed, "team session without SkipRequests should auto-deny")
+	resCh := make(chan bool, 1)
+	go func() {
+		allowed, _ := bridge.Request(ctx, permission.CreatePermissionRequest{
+			SessionID: "s1", ToolCallID: "tc-popup", ToolName: "bash",
+			Action: "run", Description: "test", Path: ".",
+		})
+		resCh <- allowed
+	}()
+
+	// Wait for the request to reach requestWithUI.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := bridge.TeamContextFor("tc-popup"); ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, visible := bridge.TeamContextFor("tc-popup")
+	require.True(t, visible, "should route to requestWithUI (popup) when SkipRequests=false")
+
+	require.NoError(t, bridge.ResolveRequest("tc-popup", false, "call"))
+	select {
+	case allowed := <-resCh:
+		assert.False(t, allowed, "UI deny should return false")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Request did not return")
+	}
 }
 
 // TestPermissionBridge_AlwaysShowNotActiveSession verifies that a team member's
