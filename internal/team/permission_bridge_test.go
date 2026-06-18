@@ -490,3 +490,73 @@ func TestPermissionBridge_TraceLogging(t *testing.T) {
 		require.Contains(t, joined, want, "missing trace line: %s", want)
 	}
 }
+
+// TestPermissionBridge_SequentialQueue verifies that two concurrent member
+// requests are presented one at a time: only the first is Published to the UI
+// until resolved, then the second is Published. "Displayed" is observed via the
+// pubsub event stream (the TUI only opens a dialog on a Publish event).
+func TestPermissionBridge_SequentialQueue(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(5 * time.Second)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events := inner.Subscribe(ctx)
+
+	// nextEvent returns the next published request ID, or "" on timeout.
+	nextEvent := func(timeout time.Duration) string {
+		select {
+		case ev := <-events:
+			return ev.Payload.ID
+		case <-time.After(timeout):
+			return ""
+		}
+	}
+
+	mkReq := func(reqID, member string) <-chan bool {
+		ac := actor.ActorContext{
+			SessionID: "s-q", TeamID: "team-q", MemberID: member,
+			MemberName: member, MemberRole: "programmer",
+		}
+		rctx := ac.WithContext(t.Context())
+		resCh := make(chan bool, 1)
+		go func() {
+			allowed, _ := bridge.Request(rctx, permission.CreatePermissionRequest{
+				SessionID: "s-q", ToolCallID: reqID, ToolName: "write",
+				Action: "write", Description: "test", Path: "/tmp/x",
+			})
+			resCh <- allowed
+		}()
+		return resCh
+	}
+
+	r1 := mkReq("tc-q1", "m1")
+
+	// First should be Published promptly.
+	require.Equal(t, "tc-q1", nextEvent(2*time.Second), "first request should be displayed")
+
+	// Now enqueue the second while the first is still displayed.
+	r2 := mkReq("tc-q2", "m2")
+
+	// Second must NOT be Published yet (still waiting in FIFO). Give it a moment
+	// to (incorrectly) publish, then assert silence.
+	assert.Equal(t, "", nextEvent(150*time.Millisecond), "second request should wait, not be displayed yet")
+
+	// Resolve the first — second should be Published next.
+	require.NoError(t, bridge.ResolveRequest("tc-q1", true, "call"))
+	select {
+	case <-r1:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not return")
+	}
+
+	require.Equal(t, "tc-q2", nextEvent(2*time.Second), "second request should be displayed after first resolved")
+
+	require.NoError(t, bridge.ResolveRequest("tc-q2", true, "call"))
+	select {
+	case <-r2:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second request did not return")
+	}
+}
