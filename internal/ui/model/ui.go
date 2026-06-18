@@ -3635,7 +3635,10 @@ func (m *UI) openPermissionsDialog(perm permission.PermissionRequest) tea.Cmd {
 
 	// M5.3: if this request originated from a team member, render the team
 	// dialog (team-specific buttons → PermBridgeResolve → ResolveRequest).
-	// Otherwise render the standard dialog (inner Grant/Deny path).
+	// Otherwise render the standard dialog (inner Grant/Deny path). A miss
+	// (TeamContextFor false) also covers a team request whose context was
+	// already cleared by the bridge's timeout — in that case the member is
+	// already denied, so falling through to the plain dialog is harmless.
 	if bridge := m.com.Workspace.PermBridge(); bridge != nil {
 		if tctx, ok := bridge.TeamContextFor(perm.ID); ok {
 			td := dialog.NewTeamPermissionDialog(m.com, *tctx, perm, opts...)
