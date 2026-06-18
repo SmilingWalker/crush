@@ -38,7 +38,7 @@ const (
 
 // defaultRequestTimeout is how long requestWithUI waits for a UI decision
 // before denying. It also sets the PermissionRequest.ExpiresAt window.
-const defaultRequestTimeout = 30 * time.Second
+const defaultRequestTimeout = 60 * time.Second
 
 // PermAuditEvent records a permission-related event for the audit trail.
 type PermAuditEvent struct {
@@ -134,6 +134,19 @@ type PermissionRequest struct {
 	DecidedAt      *time.Time
 }
 
+// pendingEntry is one member permission request awaiting a UI decision. It is
+// either waiting in displayFIFO or currently the displayed slot. Only the
+// displayed entry has been Published to the UI and has a live timer.
+type pendingEntry struct {
+	reqID     string
+	ch        chan bool                  // decision from UI (buffered, size 1)
+	tctx      *TeamPermissionContext
+	opts      permission.CreatePermissionRequest
+	ac        actor.ActorContext
+	timeoutCh chan struct{}              // closed when the 60s display-timer fires
+	timer     *time.Timer                // nil until promoted to displayed
+}
+
 // PermissionStore manages in-memory permission requests.
 type PermissionStore struct {
 	mu       sync.RWMutex
@@ -217,6 +230,11 @@ type PermissionBridge struct {
 	// requestTimeout is how long requestWithUI waits for a UI decision before
 	// denying. Defaults to 30s; overridable for tests.
 	requestTimeout time.Duration
+	// --- display coordination (M5.4) ---
+	queueMu     sync.Mutex
+	displayFIFO []*pendingEntry             // waiting, not yet shown
+	displayed   *pendingEntry               // the one currently shown (≤1 invariant)
+	entries     map[string]*pendingEntry    // reqID → entry, O(1) resolve/cancel/timeout
 }
 
 // NewPermissionBridge creates a PermissionBridge wrapping the given permission.Service.
@@ -228,6 +246,7 @@ func NewPermissionBridge(inner permission.Service) *PermissionBridge {
 		auditFn:         func(ctx context.Context, event PermAuditEvent) {}, // no-op default
 		pendingRequests: make(map[string]chan bool),
 		teamContexts:    make(map[string]*TeamPermissionContext),
+		entries:         make(map[string]*pendingEntry),
 		requestTimeout:  defaultRequestTimeout,
 	}
 	fsm := NewPermissionFSM(bridge.store, bridge.grantStore, bridge.auditFn)
@@ -419,6 +438,86 @@ func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope stri
 
 	ch <- allowed
 	return nil
+}
+
+// pumpDisplay promotes the front of displayFIFO to the displayed slot, arms its
+// 60s timer, and publishes it to the UI. If something is already displayed, it
+// does nothing. Callers must NOT hold queueMu.
+func (b *PermissionBridge) pumpDisplay() {
+	b.queueMu.Lock()
+	if b.displayed != nil {
+		b.queueMu.Unlock()
+		return
+	}
+	if len(b.displayFIFO) == 0 {
+		b.queueMu.Unlock()
+		return
+	}
+	entry := b.displayFIFO[0]
+	b.displayFIFO = b.displayFIFO[1:]
+	b.displayed = entry
+	reqID := entry.reqID
+	b.queueMu.Unlock()
+
+	// Arm the display timer (60s by default). handleTimeout clears the slot and
+	// wakes the blocking goroutine via timeoutCh.
+	entry.timer = time.AfterFunc(b.requestTimeout, func() {
+		b.handleTimeout(reqID)
+	})
+
+	// Publish to the inner broker so the TUI opens the dialog.
+	b.inner.Publish(pubsub.CreatedEvent, permission.PermissionRequest{
+		ID:         reqID,
+		ToolCallID: reqID,
+		ToolName:   entry.opts.ToolName,
+		SessionID:  entry.opts.SessionID,
+		Action:     entry.opts.Action,
+		Path:       entry.opts.Path,
+	})
+	fifoRemaining := func() int {
+		b.queueMu.Lock()
+		defer b.queueMu.Unlock()
+		return len(b.displayFIFO)
+	}
+	slog.Debug("perm_bridge: pumpDisplay published",
+		"tool_call_id", reqID, "fifo_remaining", fifoRemaining(),
+	)
+}
+
+// handleTimeout is the AfterFunc callback for a displayed entry's timer. It
+// terminates the entry (deny) and advances the queue. Idempotent: if the entry
+// was already resolved/cancelled, it is a no-op.
+func (b *PermissionBridge) handleTimeout(reqID string) {
+	b.queueMu.Lock()
+	entry, ok := b.entries[reqID]
+	if !ok {
+		b.queueMu.Unlock()
+		return
+	}
+	wasDisplayed := b.displayed == entry
+	if wasDisplayed {
+		b.displayed = nil
+	}
+	delete(b.entries, reqID)
+	delete(b.pendingRequests, reqID)
+	delete(b.teamContexts, reqID)
+	removeFromFIFO(b, reqID)
+	b.queueMu.Unlock()
+
+	if wasDisplayed {
+		b.pumpDisplay()
+	}
+	close(entry.timeoutCh)
+}
+
+// removeFromFIFO removes reqID from displayFIFO. Caller must hold queueMu.
+func removeFromFIFO(b *PermissionBridge, reqID string) {
+	for i, e := range b.displayFIFO {
+		if e.reqID == reqID {
+			b.displayFIFO = append(b.displayFIFO[:i], b.displayFIFO[i+1:]...)
+			return
+		}
+	}
 }
 
 // --- delegation methods implementing the full permission.Service interface ---
