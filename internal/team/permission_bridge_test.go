@@ -251,3 +251,87 @@ func TestPermissionBridge_TeamContextFor_NotFound(t *testing.T) {
 	_, ok := bridge.TeamContextFor("nope")
 	assert.False(t, ok)
 }
+
+// TestPermissionBridge_TimeoutDeniesAndCleansUp verifies that an unresolved
+// request denies after the bridge-local timeout and clears its state.
+func TestPermissionBridge_TimeoutDeniesAndCleansUp(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(40 * time.Millisecond) // short for the test
+
+	tracker := NewActiveSessionTracker()
+	tracker.SetSession("s-to", "member-2")
+	bridge.SetActiveSessionTracker(tracker)
+
+	ac := actor.ActorContext{
+		SessionID: "s-to", TeamID: "team-1", MemberID: "member-2",
+	}
+	ctx := ac.WithContext(t.Context())
+
+	start := time.Now()
+	allowed, err := bridge.Request(ctx, permission.CreatePermissionRequest{
+		SessionID: "s-to", ToolCallID: "tc-to-1", ToolName: "bash",
+		Action: "run", Description: "test", Path: ".",
+	})
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.False(t, allowed, "timeout should deny")
+	assert.GreaterOrEqual(t, elapsed, 30*time.Millisecond, "should wait for the timeout")
+
+	_, ok := bridge.TeamContextFor("tc-to-1")
+	assert.False(t, ok, "team context should be cleared after timeout")
+
+	// A late ResolveRequest must not panic and must report not-pending.
+	err = bridge.ResolveRequest("tc-to-1", true, "call")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not pending")
+}
+
+// TestPermissionBridge_CtxCancelDeniesAndCleansUp verifies that cancelling the
+// request context returns promptly and clears state.
+func TestPermissionBridge_CtxCancelDeniesAndCleansUp(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge(inner)
+	bridge.SetRequestTimeout(5 * time.Second)
+
+	tracker := NewActiveSessionTracker()
+	tracker.SetSession("s-cc", "member-3")
+	bridge.SetActiveSessionTracker(tracker)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ac := actor.ActorContext{
+		SessionID: "s-cc", TeamID: "team-1", MemberID: "member-3",
+	}
+	ctx = ac.WithContext(ctx)
+
+	resCh := make(chan error, 1)
+	go func() {
+		_, err := bridge.Request(ctx, permission.CreatePermissionRequest{
+			SessionID: "s-cc", ToolCallID: "tc-cc-1", ToolName: "bash",
+			Action: "run", Description: "test", Path: ".",
+		})
+		resCh <- err
+	}()
+
+	// Wait for the context to be stored, then cancel.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := bridge.TeamContextFor("tc-cc-1"); ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case err := <-resCh:
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Request did not return after cancel")
+	}
+
+	_, ok := bridge.TeamContextFor("tc-cc-1")
+	assert.False(t, ok, "team context should be cleared after cancel")
+}
