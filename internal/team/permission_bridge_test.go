@@ -481,9 +481,9 @@ func TestPermissionBridge_TraceLogging(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{
 		"perm_bridge: request",
-		"perm_bridge: active session matches",
-		"perm_bridge: requestWithUI stored team context",
-		"perm_bridge: published permission request to UI",
+		"perm_bridge: team → requestWithUI",
+		"perm_bridge: requestWithUI enqueued",
+		"perm_bridge: pumpDisplay published",
 		"perm_bridge: ResolveRequest",
 		"perm_bridge: request resolved by UI",
 	} {
