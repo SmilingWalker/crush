@@ -15,7 +15,7 @@
 | M3.5 | change proposal 预览 | proposal artifact + review UI | 实现型价值演示 |
 | M4 | 权限桥和共享任务板 | permission/audit/task CAS | 安全协作演示 |
 | M5 | patch artifact 写作业 | patch review/apply | 可控写代码演示 |
-| M6 | worktree/process/A2A | external runtime adapter | 高级扩展演示 |
+| M6 | worktree/process | external runtime adapter | 高级扩展演示 |
 
 ## 阶段推进模板
 
@@ -524,11 +524,16 @@ review modal 使用 unified diff，支持 file/hunk 导航、大 diff summary mo
 - M6+ DB blob / CAS object store / remote backend adapter。
 - 可选 content encryption；不改变 `ContentStore` API。
 
-## M6：Advanced Runtime / Worktree / A2A Gateway
+## M6：Advanced Runtime / Worktree / Process Gateway
+
+> **⚠️ A2A 已暂缓（2026-06-22 决定）**：本里程碑后续不再实现 A2A（Agent-to-Agent）协议网关。
+> runtime backend 范围收窄为 `in_process` / `worktree` / `process` 三种。A2A 的
+> AgentCard/Task/Message/Artifact 映射、外部 agent 接入相关条目从本里程碑移除，待将来
+> 重新评估需求后再单独立项。M7-05 A2A Gateway 任务标记为 deferred。
 
 ### 用户功能
 
-高级 teammate 可以在 worktree/process 中运行，或通过 A2A gateway 接入外部 agent。
+高级 teammate 可以在 worktree/process 中运行。
 
 ### 实现
 
@@ -536,16 +541,18 @@ review modal 使用 unified diff，支持 file/hunk 导航、大 diff summary mo
 - process backend。
 - crash recovery。
 - permission forwarding。
-- A2A AgentCard/Task/Message/Artifact mapping。
 - network/direct-write policy。
+
+> ~~A2A AgentCard/Task/Message/Artifact mapping。~~ （暂缓，见上方说明）
 
 ### 交付件
 
 - runtime adapter interface。
 - worktree/process backend proof。
 - crash recovery tests。
-- A2A gateway mapping doc/code skeleton。
 - advanced backend UI state。
+
+> ~~A2A gateway mapping doc/code skeleton。~~ （暂缓，见上方说明）
 
 ### UI
 
@@ -555,12 +562,10 @@ advanced team panel 增加 runtime backend：
 member       backend      state
 researcher   in-process   running
 builder      worktree     testing
-remote-docs  a2a          waiting
 ```
 
 ### 退出条件
 
 - worktree task 可独立测试。
 - process crash 可恢复。
-- A2A gateway 不替代内部 TeamRuntime。
 - direct write 受 lease/hash/policy 控制。
