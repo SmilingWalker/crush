@@ -329,3 +329,8 @@ func (s *stubPermissionService) Publish(et pubsub.EventType, payload permission.
 	s.publishCalled = true
 	s.lastPublished = payload
 }
+
+func (s *stubPermissionService) PublishMustDeliver(ctx context.Context, et pubsub.EventType, payload permission.PermissionRequest) {
+	s.publishCalled = true
+	s.lastPublished = payload
+}

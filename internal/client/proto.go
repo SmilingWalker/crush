@@ -131,6 +131,7 @@ func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, er
 
 	go func() {
 		defer rsp.Body.Close()
+		defer close(events)
 
 		scr := bufio.NewReader(rsp.Body)
 		for {
@@ -139,8 +140,15 @@ func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, er
 				break
 			}
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				slog.Error("Reading from events stream", "error", err)
-				time.Sleep(time.Second * 2)
+				select {
+				case <-time.After(time.Second * 2):
+				case <-ctx.Done():
+					return
+				}
 				continue
 			}
 			line = bytes.TrimSpace(line)
@@ -166,43 +174,75 @@ func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, er
 			case pubsub.PayloadTypeLSPEvent:
 				var e pubsub.Event[proto.LSPEvent]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			case pubsub.PayloadTypeMCPEvent:
 				var e pubsub.Event[proto.MCPEvent]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			case pubsub.PayloadTypePermissionRequest:
 				var e pubsub.Event[proto.PermissionRequest]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			case pubsub.PayloadTypePermissionNotification:
 				var e pubsub.Event[proto.PermissionNotification]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			case pubsub.PayloadTypeMessage:
 				var e pubsub.Event[proto.Message]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			case pubsub.PayloadTypeSession:
 				var e pubsub.Event[proto.Session]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			case pubsub.PayloadTypeFile:
 				var e pubsub.Event[proto.File]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			case pubsub.PayloadTypeAgentEvent:
 				var e pubsub.Event[proto.AgentEvent]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			case pubsub.PayloadTypeConfigChanged:
 				var e pubsub.Event[proto.ConfigChanged]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			case pubsub.PayloadTypeSkillsEvent:
 				var e pubsub.Event[proto.SkillsEvent]
 				_ = json.Unmarshal(p.Payload, &e)
-				sendEvent(ctx, events, e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
+			case pubsub.PayloadTypeRunComplete:
+				var e pubsub.Event[proto.RunComplete]
+				_ = json.Unmarshal(p.Payload, &e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
+			case pubsub.PayloadTypeUpdateAvailable:
+				var e pubsub.Event[proto.UpdateAvailable]
+				_ = json.Unmarshal(p.Payload, &e)
+				if !sendEvent(ctx, events, e) {
+					return
+				}
 			default:
 				slog.Warn("Unknown event type", "type", p.Type)
 				continue
@@ -213,12 +253,15 @@ func (c *Client) SubscribeEvents(ctx context.Context, id string) (<-chan any, er
 	return events, nil
 }
 
-func sendEvent(ctx context.Context, evc chan any, ev any) {
+func sendEvent(ctx context.Context, evc chan any, ev any) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	select {
 	case evc <- ev:
+		return true
 	case <-ctx.Done():
-		close(evc)
-		return
+		return false
 	}
 }
 
@@ -369,9 +412,16 @@ func (c *Client) UpdateAgent(ctx context.Context, id string) error {
 }
 
 // SendMessage sends a message to the agent for a workspace.
-func (c *Client) SendMessage(ctx context.Context, id string, sessionID, prompt string, attachments ...message.Attachment) error {
+//
+// When runID is non-empty it is echoed back on the resulting
+// proto.RunComplete event, giving the caller a unique correlator
+// for completion detection. Pass "" when the caller does not need
+// to distinguish its own turn's terminal event from any concurrent
+// turn on the same session (e.g. interactive TUI usage).
+func (c *Client) SendMessage(ctx context.Context, id string, sessionID, runID, prompt string, attachments ...message.Attachment) error {
 	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent", id), nil, jsonBody(proto.AgentMessage{
 		SessionID:   sessionID,
+		RunID:       runID,
 		Prompt:      prompt,
 		Attachments: proto.AttachmentsFromMessage(attachments),
 	}), http.Header{"Content-Type": []string{"application/json"}})
@@ -379,10 +429,46 @@ func (c *Client) SendMessage(ctx context.Context, id string, sessionID, prompt s
 		return fmt.Errorf("failed to send message to agent: %w", err)
 	}
 	defer rsp.Body.Close()
-	if rsp.StatusCode != http.StatusOK {
+	if rsp.StatusCode != http.StatusOK && rsp.StatusCode != http.StatusAccepted {
+		if msg := decodeErrorMessage(rsp.Body); msg != "" {
+			return fmt.Errorf("failed to send message to agent: status code %d: %s", rsp.StatusCode, msg)
+		}
 		return fmt.Errorf("failed to send message to agent: status code %d", rsp.StatusCode)
 	}
 	return nil
+}
+
+// decodeErrorMessage attempts to decode the response body as a
+// proto.Error and returns its message. It returns an empty string
+// when the body is empty or cannot be decoded into a proto.Error
+// with a non-empty message, letting callers fall back to a
+// status-only error.
+func decodeErrorMessage(body io.Reader) string {
+	var e proto.Error
+	if err := json.NewDecoder(body).Decode(&e); err != nil {
+		return ""
+	}
+	return e.Message
+}
+
+// RunShellCommand runs a shell command in the workspace without triggering the agent.
+func (c *Client) RunShellCommand(ctx context.Context, id, sessionID, command string, termWidth int) (proto.ShellCommandResponse, error) {
+	rsp, err := c.post(ctx, fmt.Sprintf("/workspaces/%s/agent/sessions/%s/shell", id, sessionID), nil, jsonBody(proto.ShellCommandRequest{
+		Command:   command,
+		TermWidth: termWidth,
+	}), http.Header{"Content-Type": []string{"application/json"}})
+	if err != nil {
+		return proto.ShellCommandResponse{}, fmt.Errorf("failed to run shell command: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return proto.ShellCommandResponse{}, fmt.Errorf("failed to run shell command: status code %d", rsp.StatusCode)
+	}
+	var resp proto.ShellCommandResponse
+	if err := json.NewDecoder(rsp.Body).Decode(&resp); err != nil {
+		return proto.ShellCommandResponse{}, fmt.Errorf("failed to decode shell command response: %w", err)
+	}
+	return resp, nil
 }
 
 // GetAgentSessionInfo retrieves the agent session info for a workspace.

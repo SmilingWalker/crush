@@ -40,19 +40,55 @@ type ConfigChanged struct {
 	WorkspaceID string `json:"workspace_id"`
 }
 
+// UpdateAvailable is published when a newer Crush release is detected
+// on the server side. It mirrors app.UpdateAvailableMsg across the SSE
+// boundary so client/server mode TUI clients see the same notification
+// as local-mode clients.
+type UpdateAvailable struct {
+	CurrentVersion string `json:"current_version"`
+	LatestVersion  string `json:"latest_version"`
+	IsDevelopment  bool   `json:"is_development"`
+}
+
 // CurrentSession is the request body for the per-client
 // current-session endpoint. An empty SessionID clears the entry.
 type CurrentSession struct {
 	SessionID string `json:"session_id"`
 }
 
+// RunComplete is the authoritative end-of-run signal for a session,
+// emitted exactly once per top-level agent turn after all message
+// updates for the turn have flushed. Clients that need a reliable
+// completion contract (notably `crush run` in client/server mode)
+// should listen for this event filtered by RunID (preferred) — or
+// by SessionID when no RunID was supplied — and use Text and
+// MessageID to reconcile any output they have already streamed from
+// earlier message events. Error is non-empty when the run terminated
+// with an error; Cancelled is true when terminated due to context
+// cancellation.
+//
+// RunID echoes the value the caller set on AgentMessage.RunID. It is
+// the only safe correlator when the caller's prompt was queued
+// behind a busy session: another turn's RunComplete for the same
+// SessionID may arrive first, and filtering by SessionID alone
+// would terminate the caller before its own turn ran.
+type RunComplete struct {
+	SessionID string `json:"session_id"`
+	RunID     string `json:"run_id,omitempty"`
+	MessageID string `json:"message_id"`
+	Text      string `json:"text,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Cancelled bool   `json:"cancelled,omitempty"`
+}
+
 // SkillInfo describes a visible skill exposed to a frontend.
 type SkillInfo struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Label       string `json:"label"`
-	Source      string `json:"source"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Label         string `json:"label"`
+	Source        string `json:"source"`
+	UserInvocable bool   `json:"user_invocable"`
 }
 
 // ReadSkillRequest is the request body for reading a skill's content.
@@ -89,10 +125,37 @@ func (a AgentInfo) IsZero() bool {
 }
 
 // AgentMessage represents a message sent to the agent.
+//
+// RunID, when non-empty, is echoed back on the [RunComplete] event
+// emitted for the resulting turn. Callers that need to correlate a
+// specific SendMessage with its terminal event (notably
+// `crush run`, which may attach to a busy session whose currently
+// running turn finishes first) should set it to a fresh unique
+// value before the request. Server-side propagation flows through
+// agent.WithRunID on the request context into the
+// SessionAgentCall; it is preserved across the busy-session queue.
+// When empty the resulting RunComplete carries an empty RunID and
+// callers must fall back to SessionID-only filtering, which
+// remains correct only when no other turns are in flight for the
+// same session.
 type AgentMessage struct {
 	SessionID   string       `json:"session_id"`
+	RunID       string       `json:"run_id,omitempty"`
 	Prompt      string       `json:"prompt"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+// ShellCommandRequest represents a request to run a shell command directly.
+type ShellCommandRequest struct {
+	SessionID string `json:"session_id"`
+	Command   string `json:"command"`
+	TermWidth int    `json:"term_width,omitempty"`
+}
+
+// ShellCommandResponse represents the result of a direct shell command.
+type ShellCommandResponse struct {
+	Output   string `json:"output"`
+	ExitCode int    `json:"exit_code"`
 }
 
 // AgentSession represents a session with its busy status.

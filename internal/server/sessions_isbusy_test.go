@@ -30,6 +30,14 @@ type stubCoordinator struct {
 func (s *stubCoordinator) Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	return nil, nil
 }
+
+func (s *stubCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	return nil, nil
+}
+
+func (s *stubCoordinator) BeginAccepted(sessionID string) *agent.AcceptedRun {
+	return nil
+}
 func (s *stubCoordinator) Cancel(string) {}
 func (s *stubCoordinator) CancelAll()    {}
 func (s *stubCoordinator) IsBusy() bool  { return false }
@@ -44,8 +52,9 @@ func (s *stubCoordinator) Summarize(context.Context, string) error {
 }
 func (s *stubCoordinator) AppendTools([]fantasy.AgentTool) {}
 
-func (s *stubCoordinator) Model() agent.Model                 { return agent.Model{} }
-func (s *stubCoordinator) UpdateModels(context.Context) error { return nil }
+func (s *stubCoordinator) Model() agent.Model                            { return agent.Model{} }
+func (s *stubCoordinator) UpdateModels(context.Context) error            { return nil }
+func (s *stubCoordinator) GenerateTitle(context.Context, string, string) {}
 func (s *stubCoordinator) BuildSessionAgent(ctx context.Context, spec agent.AgentSpec) (agent.SessionAgent, error) {
 	return nil, errors.New("not implemented in stubCoordinator")
 }

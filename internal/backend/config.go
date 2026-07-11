@@ -196,11 +196,12 @@ func (b *Backend) ListSkills(workspaceID string) ([]proto.SkillInfo, error) {
 	result := make([]proto.SkillInfo, len(entries))
 	for i, entry := range entries {
 		result[i] = proto.SkillInfo{
-			ID:          entry.ID,
-			Name:        entry.Name,
-			Description: entry.Description,
-			Label:       entry.Label,
-			Source:      string(entry.Source),
+			ID:            entry.ID,
+			Name:          entry.Name,
+			Description:   entry.Description,
+			Label:         entry.Label,
+			Source:        string(entry.Source),
+			UserInvocable: entry.UserInvocable,
 		}
 	}
 	return result, nil
@@ -221,13 +222,13 @@ func (b *Backend) EnableDockerMCP(ctx context.Context, workspaceID string) error
 
 	if err := mcptools.InitializeSingle(ctx, config.DockerMCPName, ws.Cfg); err != nil {
 		disableErr := mcptools.DisableSingle(ws.Cfg, config.DockerMCPName)
-		delete(ws.Cfg.Config().MCP, config.DockerMCPName)
+		ws.Cfg.RemoveDockerMCPInMemory()
 		return fmt.Errorf("failed to start docker MCP: %w", errors.Join(err, disableErr))
 	}
 
 	if err := ws.Cfg.PersistDockerMCPConfig(mcpConfig); err != nil {
 		disableErr := mcptools.DisableSingle(ws.Cfg, config.DockerMCPName)
-		delete(ws.Cfg.Config().MCP, config.DockerMCPName)
+		ws.Cfg.RemoveDockerMCPInMemory()
 		return fmt.Errorf("docker MCP started but failed to persist configuration: %w", errors.Join(err, disableErr))
 	}
 

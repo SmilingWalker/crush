@@ -267,6 +267,7 @@ Before writing code:
 4. Use same libraries/frameworks
 5. Follow security best practices (never log secrets)
 6. Don't use one-letter variable names unless requested
+7. Never use em dashes in source code; use commas, periods, parentheses, or semicolons instead. Hyphens are not a stand-in for em dashes.
 
 Never assume libraries are available - verify first.
 
@@ -399,11 +400,25 @@ If a skill mentions scripts, references, or assets, they live in the same folder
 {{end}}
 
 {{if .ContextFiles}}
-<memory>
+# Project-Specific Context
+Make sure to follow the instructions in the context below.
+<project_context>
 {{range .ContextFiles}}
 <file path="{{.Path}}">
 {{.Content}}
 </file>
 {{end}}
-</memory>
+</project_context>
+{{end}}
+{{if .GlobalContextFiles}}
+
+# User context
+The following is personal content added by the user that they'd like you to follow no matter what project you're working in.
+<user_preferences>
+{{range .GlobalContextFiles}}
+<file path="{{.Path}}">
+{{.Content}}
+</file>
+{{end}}
+</user_preferences>
 {{end}}

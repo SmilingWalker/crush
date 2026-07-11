@@ -582,3 +582,9 @@ func (b *PermissionBridge) Subscribe(ctx context.Context) <-chan pubsub.Event[pe
 func (b *PermissionBridge) Publish(et pubsub.EventType, payload permission.PermissionRequest) {
 	b.inner.Publish(et, payload)
 }
+
+// PublishMustDeliver delegates to the inner permission.Service
+// (pubsub.Publisher[permission.PermissionRequest]).
+func (b *PermissionBridge) PublishMustDeliver(ctx context.Context, et pubsub.EventType, payload permission.PermissionRequest) {
+	b.inner.PublishMustDeliver(ctx, et, payload)
+}

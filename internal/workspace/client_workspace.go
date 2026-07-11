@@ -12,8 +12,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
+	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/client"
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/herdr"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
@@ -39,6 +41,10 @@ type ClientWorkspace struct {
 	mu     sync.RWMutex
 	ws     proto.Workspace
 	skills *skills.Manager
+
+	// herdrClient reports agent state to herdr when running inside
+	// a herdr-managed pane. Nil when not in a herdr environment.
+	herdrClient *herdr.Client
 }
 
 // NewClientWorkspace creates a new ClientWorkspace that proxies all
@@ -56,9 +62,10 @@ func NewClientWorkspace(c *client.Client, ws proto.Workspace) *ClientWorkspace {
 	states := protoToSkillStates(ws.Skills)
 	mgr := skills.NewManager(nil, nil, states, skills.WithGlobalMirror())
 	return &ClientWorkspace{
-		client: c,
-		ws:     ws,
-		skills: mgr,
+		client:      c,
+		ws:          ws,
+		skills:      mgr,
+		herdrClient: herdr.Init(),
 	}
 }
 
@@ -149,6 +156,7 @@ func (w *ClientWorkspace) ParseAgentToolSessionID(sessionID string) (string, str
 // are propagated to the caller; the TUI logs and ignores them since
 // the presence record is a hint, not correctness-critical state.
 func (w *ClientWorkspace) SetCurrentSession(ctx context.Context, sessionID string) error {
+	w.herdrClient.SetSessionID(sessionID)
 	return w.client.SetCurrentSession(ctx, w.workspaceID(), sessionID)
 }
 
@@ -181,7 +189,15 @@ func (w *ClientWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Me
 // -- Agent --
 
 func (w *ClientWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {
-	return w.client.SendMessage(ctx, w.workspaceID(), sessionID, prompt, attachments...)
+	// The interactive TUI does not consume notify.RunComplete for
+	// completion detection (it observes message events directly),
+	// so passing an empty RunID is correct here: it skips the
+	// correlator stamping path without functional consequences.
+	return w.client.SendMessage(ctx, w.workspaceID(), sessionID, "", prompt, attachments...)
+}
+
+func (w *ClientWorkspace) AgentRunShellCommand(ctx context.Context, sessionID, command string, termWidth int, _ func(string), _ bool) (proto.ShellCommandResponse, error) {
+	return w.client.RunShellCommand(ctx, w.workspaceID(), sessionID, command, termWidth)
 }
 
 func (w *ClientWorkspace) AgentCancel(sessionID string) {
@@ -518,11 +534,12 @@ func (w *ClientWorkspace) ListSkills(ctx context.Context) ([]skills.CatalogEntry
 	result := make([]skills.CatalogEntry, len(entries))
 	for i, entry := range entries {
 		result[i] = skills.CatalogEntry{
-			ID:          entry.ID,
-			Name:        entry.Name,
-			Description: entry.Description,
-			Label:       entry.Label,
-			Source:      skills.SourceType(entry.Source),
+			ID:            entry.ID,
+			Name:          entry.Name,
+			Description:   entry.Description,
+			Label:         entry.Label,
+			Source:        skills.SourceType(entry.Source),
+			UserInvocable: entry.UserInvocable,
 		}
 	}
 	return result, nil
@@ -629,6 +646,11 @@ func (w *ClientWorkspace) Subscribe(program *tea.Program) {
 // are translated into domain types and forwarded to send.
 func (w *ClientWorkspace) consumeEvents(evc <-chan any, send func(tea.Msg)) {
 	for ev := range evc {
+		// Forward events to herdr if running inside a herdr pane.
+		if hev := herdr.Translate(ev); hev != nil {
+			w.herdrClient.HandleEvent(hev)
+		}
+
 		if _, ok := ev.(pubsub.Event[proto.ConfigChanged]); ok {
 			w.refreshWorkspace()
 			continue
@@ -653,6 +675,7 @@ func (w *ClientWorkspace) ActiveSessionTracker() *team.ActiveSessionTracker {
 }
 
 func (w *ClientWorkspace) Shutdown() {
+	w.herdrClient.Close()
 	_ = w.client.DeleteWorkspace(context.Background(), w.workspaceID())
 }
 
@@ -727,12 +750,35 @@ func (w *ClientWorkspace) translateEvent(ev any) tea.Msg {
 			Payload: protoToFile(e.Payload),
 		}
 	case pubsub.Event[proto.AgentEvent]:
+		n := notify.Notification{
+			SessionID:    e.Payload.SessionID,
+			SessionTitle: e.Payload.SessionTitle,
+			RunID:        e.Payload.RunID,
+			Type:         notify.Type(e.Payload.Type),
+		}
+		if e.Payload.Error != nil {
+			n.Message = e.Payload.Error.Error()
+		}
 		return pubsub.Event[notify.Notification]{
+			Type:    e.Type,
+			Payload: n,
+		}
+	case pubsub.Event[proto.RunComplete]:
+		// Translate the wire-level proto.RunComplete back into the
+		// agent's domain notify.RunComplete. Without this case the
+		// default branch below warns on every run completion in the
+		// server-mode TUI, even though the TUI itself doesn't act
+		// on RunComplete — converting silently keeps the workspace
+		// event bridge symmetric with the server-side wrapEvent.
+		return pubsub.Event[notify.RunComplete]{
 			Type: e.Type,
-			Payload: notify.Notification{
-				SessionID:    e.Payload.SessionID,
-				SessionTitle: e.Payload.SessionTitle,
-				Type:         notify.Type(e.Payload.Type),
+			Payload: notify.RunComplete{
+				SessionID: e.Payload.SessionID,
+				RunID:     e.Payload.RunID,
+				MessageID: e.Payload.MessageID,
+				Text:      e.Payload.Text,
+				Error:     e.Payload.Error,
+				Cancelled: e.Payload.Cancelled,
 			},
 		}
 	case pubsub.Event[proto.SkillsEvent]:
@@ -743,6 +789,12 @@ func (w *ClientWorkspace) translateEvent(ev any) tea.Msg {
 		return pubsub.Event[skills.Event]{
 			Type:    e.Type,
 			Payload: skills.Event{States: states},
+		}
+	case pubsub.Event[proto.UpdateAvailable]:
+		return app.UpdateAvailableMsg{
+			CurrentVersion: e.Payload.CurrentVersion,
+			LatestVersion:  e.Payload.LatestVersion,
+			IsDevelopment:  e.Payload.IsDevelopment,
 		}
 	default:
 		slog.Warn("Unknown event type in translateEvent", "type", fmt.Sprintf("%T", ev))
@@ -865,6 +917,12 @@ func protoToMessage(m proto.Message) message.Message {
 			msg.Parts = append(msg.Parts, message.ImageURLContent{URL: v.URL, Detail: v.Detail})
 		case proto.BinaryContent:
 			msg.Parts = append(msg.Parts, message.BinaryContent{Path: v.Path, MIMEType: v.MIMEType, Data: v.Data})
+		case proto.ShellCommand:
+			msg.Parts = append(msg.Parts, message.ShellCommand{
+				Command:  v.Command,
+				Output:   v.Output,
+				ExitCode: v.ExitCode,
+			})
 		}
 	}
 

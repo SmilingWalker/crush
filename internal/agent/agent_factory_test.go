@@ -23,6 +23,11 @@ type stubBuildCoordinator struct {
 func (c *stubBuildCoordinator) Run(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	return nil, nil
 }
+func (c *stubBuildCoordinator) RunAccepted(ctx context.Context, accept *AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	return nil, nil
+}
+func (c *stubBuildCoordinator) BeginAccepted(sessionID string) *AcceptedRun { return nil }
+func (c *stubBuildCoordinator) GenerateTitle(context.Context, string, string) {}
 func (c *stubBuildCoordinator) Cancel(string)                       {}
 func (c *stubBuildCoordinator) CancelAll()                          {}
 func (c *stubBuildCoordinator) IsSessionBusy(string) bool           { return false }

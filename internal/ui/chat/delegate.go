@@ -330,7 +330,7 @@ func (r *DelegateGroupRenderContext) RenderTool(sty *styles.Styles, width int, o
 		statusParts = append(statusParts, fmt.Sprintf("%d failed", failed))
 	}
 	statusLine := "Delegates  " + strings.Join(statusParts, " / ")
-	header := toolHeader(sty, opts.Status, "Delegates", cappedWidth, opts.Compact, statusLine)
+	header := toolHeader(sty, opts.Status, "Delegates", cappedWidth, opts, statusLine)
 	// Only show the spinner when there is no result yet AND children are still
 	// running (matches agent.go:178's anim gate).
 	spinning := !opts.HasResult() && running > 0
