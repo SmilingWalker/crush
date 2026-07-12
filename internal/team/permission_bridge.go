@@ -594,3 +594,33 @@ func (b *PermissionBridge) Publish(et pubsub.EventType, payload permission.Permi
 func (b *PermissionBridge) PublishMustDeliver(ctx context.Context, et pubsub.EventType, payload permission.PermissionRequest) {
 	b.inner.PublishMustDeliver(ctx, et, payload)
 }
+
+// PermEventToAuditEvent converts a PermAuditEvent into an AuditEvent row
+// suitable for AppendAudit. DecidedBy is stored in Summary (prefixed
+// "decided_by:") because AuditEvent has no dedicated column for it.
+// ToolName is split into ResourceType="tool" + ResourceRef=ToolName.
+func PermEventToAuditEvent(e PermAuditEvent) AuditEvent {
+	action := string(e.Action)
+	summary := ""
+	if e.DecidedBy != "" {
+		summary = "decided_by:" + e.DecidedBy
+	}
+	return AuditEvent{
+		ID:           uuid.New().String(),
+		WorkspaceID:  e.WorkspaceID,
+		TeamID:       e.TeamID,
+		MemberID:     strPtrOrNil(e.MemberID),
+		TaskID:       strPtrOrNil(e.TaskID),
+		RunID:        strPtrOrNil(e.RunID),
+		SessionID:    strPtrOrNil(e.SessionID),
+		ToolCallID:   strPtrOrNil(e.ToolCallID),
+		EventType:    "permission." + action,
+		Action:       strPtrOrNil(action),
+		ResourceType: strPtrOrNil("tool"),
+		ResourceRef:  strPtrOrNil(e.ToolName),
+		Decision:     strPtrOrNil(e.Decision),
+		Scope:        strPtrOrNil(e.Scope),
+		Summary:      strPtrOrNil(summary),
+		CreatedAt:    e.Timestamp,
+	}
+}

@@ -734,3 +734,67 @@ func TestPermissionBridge_CtxCancelAdvancesQueue(t *testing.T) {
 		t.Fatal("second did not return")
 	}
 }
+
+func TestPermEventToAuditEvent_FullMapping(t *testing.T) {
+	e := PermAuditEvent{
+		WorkspaceID: "ws-1",
+		SessionID:   "sess-1",
+		ToolCallID:  "call-1",
+		Action:      PermAuditPermissionAllowed,
+		TeamID:      "team-1",
+		MemberID:    "member-1",
+		TaskID:      "task-1",
+		RunID:       "run-1",
+		ToolName:    "write",
+		Decision:    "allowed",
+		Scope:       "task",
+		DecidedBy:   "user",
+		Timestamp:   time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC),
+	}
+
+	got := PermEventToAuditEvent(e)
+
+	require.Equal(t, "ws-1", got.WorkspaceID)
+	require.Equal(t, "team-1", got.TeamID)
+	require.Equal(t, "permission.permission_allowed", got.EventType)
+	require.NotNil(t, got.Action)
+	require.Equal(t, "permission_allowed", *got.Action)
+	require.NotNil(t, got.MemberID)
+	require.Equal(t, "member-1", *got.MemberID)
+	require.NotNil(t, got.SessionID)
+	require.Equal(t, "sess-1", *got.SessionID)
+	require.NotNil(t, got.ToolCallID)
+	require.Equal(t, "call-1", *got.ToolCallID)
+	require.NotNil(t, got.ResourceType)
+	require.Equal(t, "tool", *got.ResourceType)
+	require.NotNil(t, got.ResourceRef)
+	require.Equal(t, "write", *got.ResourceRef)
+	require.NotNil(t, got.Decision)
+	require.Equal(t, "allowed", *got.Decision)
+	require.NotNil(t, got.Scope)
+	require.Equal(t, "task", *got.Scope)
+	require.NotNil(t, got.Summary)
+	require.Equal(t, "decided_by:user", *got.Summary)
+	require.Equal(t, e.Timestamp, got.CreatedAt)
+	require.NotEmpty(t, got.ID)
+}
+
+func TestPermEventToAuditEvent_EmptyFieldsBecomeNil(t *testing.T) {
+	e := PermAuditEvent{
+		WorkspaceID: "ws-1",
+		TeamID:      "team-1",
+		Action:      PermAuditPermissionExpired,
+		Timestamp:   time.Now(),
+		// MemberID, SessionID, TaskID, etc. all empty
+	}
+
+	got := PermEventToAuditEvent(e)
+
+	require.Nil(t, got.MemberID)
+	require.Nil(t, got.SessionID)
+	require.Nil(t, got.ToolCallID)
+	require.Nil(t, got.TaskID)
+	require.Nil(t, got.RunID)
+	require.Nil(t, got.Summary)    // DecidedBy empty → Summary nil
+	require.Nil(t, got.ResourceRef) // ToolName empty → ResourceRef nil
+}
