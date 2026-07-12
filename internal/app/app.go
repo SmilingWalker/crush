@@ -99,6 +99,15 @@ type App struct {
 	// to the inner permission.Service.
 	permBridge *team.PermissionBridge
 
+	// db is the shared *sql.DB received in New(). Backs the
+	// permBridge.SetAuditFunc callback (M5-08a), which opens a tx to
+	// persist team permission audit events to team_audit_events.
+	db *sql.DB
+
+	// auditStore writes team permission audit events to team_audit_events.
+	// Backs the permBridge.SetAuditFunc callback (M5-08a).
+	auditStore team.AuditStore
+
 	// M5.2: activeSessionTracker is the shared singleton that tracks which
 	// session the user is currently viewing. PermissionBridge reads it to decide
 	// whether to pop up a permission dialog for team member tool calls.
@@ -164,6 +173,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 
 		config: store,
 
+		db: conn,
+
 		events:             pubsub.NewBroker[tea.Msg](),
 		serviceEventsWG:    &sync.WaitGroup{},
 		tuiWG:              &sync.WaitGroup{},
@@ -177,13 +188,24 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	// Non-team sessions pass through transparently to the inner service.
 	app.permBridge = team.NewPermissionBridge("default", app.Permissions)
 	app.permBridge.SetAuditFunc(func(ctx context.Context, e team.PermAuditEvent) {
-		slog.Info("team permission audit",
-			"action", e.Action,
-			"team_id", e.TeamID,
-			"member_id", e.MemberID,
-			"tool", e.ToolName,
-			"decision", e.Decision,
-		)
+		// Best-effort persistence: a failure here must not affect the
+		// permission decision that already happened. Log and move on.
+		tx, err := app.db.BeginTx(ctx, nil)
+		if err != nil {
+			slog.Error("Failed to begin permission audit tx",
+				"action", e.Action, "team_id", e.TeamID, "error", err)
+			return
+		}
+		defer tx.Rollback()
+		if err := app.auditStore.AppendAudit(ctx, tx, team.PermEventToAuditEvent(e)); err != nil {
+			slog.Error("Failed to persist permission audit",
+				"action", e.Action, "team_id", e.TeamID, "error", err)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			slog.Error("Failed to commit permission audit",
+				"action", e.Action, "error", err)
+		}
 	})
 
 	// M5.2: Create shared ActiveSessionTracker, inject into PermissionBridge.
@@ -193,10 +215,12 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	// Construct the team.Service from the shared *sql.DB. The 7 stores each
 	// wrap a *db.Queries (q above); the Service orchestrates them. Feature
 	// gate controlled by config.Options.IsAgentTeamEnabled (M3-08).
+	auditStore := team.NewAuditStore(q)
+	app.auditStore = auditStore
 	app.team = team.NewService(
 		conn,
 		team.NewTeamStore(q), team.NewMemberStore(q), team.NewTaskStore(q),
-		team.NewRunStore(q), team.NewEventStore(q), team.NewAuditStore(q),
+		team.NewRunStore(q), team.NewEventStore(q), auditStore,
 		team.NewMailboxStore(q), team.NewSessionLinkStore(q), team.NewDependencyStore(q),
 		team.WithEnabledGate(func() bool { return cfg.Options.IsAgentTeamEnabled() }),
 	)
