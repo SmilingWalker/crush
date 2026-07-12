@@ -852,3 +852,96 @@ func TestPermEventToAuditEvent_EmptyFieldsBecomeNil(t *testing.T) {
 	require.Nil(t, got.Summary)    // DecidedBy empty → Summary nil
 	require.Nil(t, got.ResourceRef) // ToolName empty → ResourceRef nil
 }
+
+// TestPermissionBridge_RequestedAuditFires verifies that requestWithUI fires
+// the permission_requested audit action when a team member's permission
+// request is enqueued for UI display.
+func TestPermissionBridge_RequestedAuditFires(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil) // skip=false
+	bridge := NewPermissionBridge("default", inner)
+	bridge.SetRequestTimeout(5 * time.Second)
+
+	var mu sync.Mutex
+	var captured []PermAuditEvent
+	bridge.SetAuditFunc(func(ctx context.Context, event PermAuditEvent) {
+		mu.Lock()
+		captured = append(captured, event)
+		mu.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ac := actor.ActorContext{
+		SessionID: "sess-req", TeamID: "team-1", MemberID: "member-1",
+		TaskID: "task-1", RunID: "run-1",
+	}
+	ctx = ac.WithContext(ctx)
+
+	go func() {
+		_, _ = bridge.Request(ctx, permission.CreatePermissionRequest{
+			SessionID:  "sess-req",
+			ToolCallID: "call-req",
+			ToolName:   "write",
+			Action:     "execute",
+			Path:       "docs/foo.md",
+		})
+	}()
+
+	// Wait for the request to reach requestWithUI (entry appears in teamContexts).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := bridge.TeamContextFor("call-req"); ok {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, visible := bridge.TeamContextFor("call-req")
+	require.True(t, visible, "request should reach requestWithUI")
+
+	// permission_requested should have fired by now.
+	mu.Lock()
+	var reqEvent *PermAuditEvent
+	for i := range captured {
+		if captured[i].Action == PermAuditPermissionRequested {
+			reqEvent = &captured[i]
+			break
+		}
+	}
+	mu.Unlock()
+
+	require.NotNil(t, reqEvent, "permission_requested audit should fire on enqueue")
+	require.Equal(t, "default", reqEvent.WorkspaceID)
+	require.Equal(t, "sess-req", reqEvent.SessionID)
+	require.Equal(t, "call-req", reqEvent.ToolCallID)
+	require.Equal(t, "team-1", reqEvent.TeamID)
+	require.Equal(t, "member-1", reqEvent.MemberID)
+	require.Equal(t, "task-1", reqEvent.TaskID)
+	require.Equal(t, "run-1", reqEvent.RunID)
+	require.Equal(t, "write", reqEvent.ToolName)
+
+	cancel() // exit the blocking Request
+}
+
+// TestPermissionBridge_LateResponseAudit verifies that ResolveRequest fires
+// the late_response audit action when called for a request that is no longer
+// pending (already resolved / timed out / cancelled / never existed).
+func TestPermissionBridge_LateResponseAudit(t *testing.T) {
+	bridge := NewPermissionBridge("default", nil)
+
+	var captured []PermAuditEvent
+	var mu sync.Mutex
+	bridge.SetAuditFunc(func(ctx context.Context, event PermAuditEvent) {
+		mu.Lock()
+		captured = append(captured, event)
+		mu.Unlock()
+	})
+
+	err := bridge.ResolveRequest("nonexistent-req", true, "call")
+	require.Error(t, err)
+
+	mu.Lock()
+	require.Len(t, captured, 1)
+	require.Equal(t, PermAuditLateResponse, captured[0].Action)
+	require.Equal(t, "nonexistent-req", captured[0].ToolCallID)
+	require.Equal(t, "default", captured[0].WorkspaceID)
+	mu.Unlock()
+}

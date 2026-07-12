@@ -380,6 +380,14 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 	b.teamContexts[reqID] = entry.tctx
 	b.queueMu.Unlock()
 
+	// M5-08b: audit that a team permission request was enqueued for UI decision.
+	b.auditFn(ctx, PermAuditEvent{
+		WorkspaceID: b.workspaceID, SessionID: opts.SessionID, ToolCallID: reqID,
+		Action: PermAuditPermissionRequested, TeamID: ac.TeamID, MemberID: ac.MemberID,
+		TaskID: ac.TaskID, RunID: ac.RunID, ToolName: opts.ToolName,
+		Resource: opts.Path, Timestamp: now,
+	})
+
 	_ = b.queue.Enqueue(ctx, teamReq) // FSM queue (5min TTL backstop); ignore full error
 
 	slog.Debug("perm_bridge: requestWithUI enqueued",
@@ -439,7 +447,14 @@ func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope stri
 	entry, ok := b.entries[reqID]
 	if !ok {
 		b.queueMu.Unlock()
-		slog.Debug("perm_bridge: ResolveRequest not pending", "tool_call_id", reqID)
+		slog.Debug("perm_bridge: ResolveRequest not pending (late or unknown)", "tool_call_id", reqID)
+		// M5-08b: audit the late response. We cannot distinguish "never existed"
+		// from "already terminated" here — reqID is a program-generated UUID, so
+		// treating all misses as late_response is acceptable.
+		b.auditFn(context.Background(), PermAuditEvent{
+			WorkspaceID: b.workspaceID, ToolCallID: reqID,
+			Action: PermAuditLateResponse, Timestamp: time.Now(),
+		})
 		return fmt.Errorf("request not pending: %s", reqID)
 	}
 	wasDisplayed := b.displayed == entry
