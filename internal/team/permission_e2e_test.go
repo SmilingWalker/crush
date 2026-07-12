@@ -227,7 +227,7 @@ func TestM5_Orphan_MarksMemberPendingAsOrphaned(t *testing.T) {
 // delegates correctly when the actor context has no team.
 func TestM5_NonTeamSessionUnchanged(t *testing.T) {
 	inner := &stubPermissionService{}
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	assert.NotNil(t, bridge.inner)
 
 	// When actor context has no team, Request delegates to inner.

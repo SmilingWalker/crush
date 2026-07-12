@@ -42,17 +42,20 @@ const defaultRequestTimeout = 60 * time.Second
 
 // PermAuditEvent records a permission-related event for the audit trail.
 type PermAuditEvent struct {
-	Action    PermAuditAction
-	TeamID    string
-	MemberID  string
-	TaskID    string
-	RunID     string
-	ToolName  string
-	Resource  string
-	Decision  string
-	Scope     string
-	DecidedBy string
-	Timestamp time.Time
+	WorkspaceID string
+	SessionID   string
+	ToolCallID  string
+	Action      PermAuditAction
+	TeamID      string
+	MemberID    string
+	TaskID      string
+	RunID       string
+	ToolName    string
+	Resource    string
+	Decision    string
+	Scope       string
+	DecidedBy   string
+	Timestamp   time.Time
 }
 
 // PermAuditFunc is called for every permission audit event.
@@ -214,11 +217,12 @@ func (s *PermissionStore) ListPendingByMember(ctx context.Context, memberID stri
 // When a team member calls a tool, the bridge creates a permission request
 // and waits for UI approval via a channel-based decision mechanism.
 type PermissionBridge struct {
-	inner      permission.Service
-	store      *PermissionStore
-	grantStore *GrantStore
-	queue      *PermissionQueue
-	auditFn    PermAuditFunc
+	workspaceID string
+	inner       permission.Service
+	store       *PermissionStore
+	grantStore  *GrantStore
+	queue       *PermissionQueue
+	auditFn     PermAuditFunc
 	// pendingRequests tracks requests awaiting UI decision
 	pendingRequests map[string]chan bool // requestID → decision channel
 	tracker         *ActiveSessionTracker // M5.2: shared singleton, injected via SetActiveSessionTracker
@@ -238,8 +242,9 @@ type PermissionBridge struct {
 }
 
 // NewPermissionBridge creates a PermissionBridge wrapping the given permission.Service.
-func NewPermissionBridge(inner permission.Service) *PermissionBridge {
+func NewPermissionBridge(workspaceID string, inner permission.Service) *PermissionBridge {
 	bridge := &PermissionBridge{
+		workspaceID:     workspaceID,
 		inner:           inner,
 		store:           NewPermissionStore(),
 		grantStore:      NewGrantStore(),
@@ -307,6 +312,7 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 	if grant, ok := b.grantStore.FindActiveGrant(ctx, opts.SessionID, opts.ToolName, opts.Action); ok {
 		slog.Debug("perm_bridge: active grant found (auto-allow)", "tool_call_id", opts.ToolCallID, "scope", grant.Scope)
 		b.auditFn(ctx, PermAuditEvent{
+			WorkspaceID: b.workspaceID, SessionID: opts.SessionID, ToolCallID: opts.ToolCallID,
 			Action: PermAuditGrantAuto, TeamID: ac.TeamID, MemberID: ac.MemberID,
 			ToolName: opts.ToolName, Decision: "allowed", Scope: grant.Scope, Timestamp: time.Now(),
 		})

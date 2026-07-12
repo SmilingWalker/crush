@@ -175,7 +175,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	// member tool calls are intercepted and routed through the team
 	// permission flow (grant check → enqueue → wait for UI approval).
 	// Non-team sessions pass through transparently to the inner service.
-	app.permBridge = team.NewPermissionBridge(app.Permissions)
+	app.permBridge = team.NewPermissionBridge("default", app.Permissions)
 	app.permBridge.SetAuditFunc(func(ctx context.Context, e team.PermAuditEvent) {
 		slog.Info("team permission audit",
 			"action", e.Action,

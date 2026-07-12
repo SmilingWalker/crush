@@ -113,7 +113,7 @@ func TestPermissionStore_UpdateRequest(t *testing.T) {
 func TestPermissionBridge_NewPermissionBridge(t *testing.T) {
 	// PermissionBridge with nil inner (valid construction, just testing defaults).
 	// The inner service is not called until Request is invoked.
-	bridge := NewPermissionBridge(nil)
+	bridge := NewPermissionBridge("default", nil)
 	assert.NotNil(t, bridge)
 	assert.NotNil(t, bridge.store)
 	assert.NotNil(t, bridge.grantStore)
@@ -122,7 +122,7 @@ func TestPermissionBridge_NewPermissionBridge(t *testing.T) {
 }
 
 func TestPermissionBridge_SetAuditFunc(t *testing.T) {
-	bridge := NewPermissionBridge(nil)
+	bridge := NewPermissionBridge("default", nil)
 	called := false
 	bridge.SetAuditFunc(func(ctx context.Context, event PermAuditEvent) {
 		called = true
@@ -133,7 +133,7 @@ func TestPermissionBridge_SetAuditFunc(t *testing.T) {
 }
 
 func TestPermissionBridge_ResolveRequest_NotFound(t *testing.T) {
-	bridge := NewPermissionBridge(nil)
+	bridge := NewPermissionBridge("default", nil)
 	err := bridge.ResolveRequest("nonexistent", true, "call")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not pending")
@@ -143,7 +143,7 @@ func TestPermissionBridge_ResolveRequest_NotFound(t *testing.T) {
 // auto-allow tool calls when SkipRequests (yolo mode) is enabled.
 func TestPermissionBridge_AutoAllowWhenSkipRequests(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), true, nil) // skip=true
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 
 	ac := actor.ActorContext{
 		SessionID: "s1", TeamID: "team-1", MemberID: "member-1",
@@ -163,7 +163,7 @@ func TestPermissionBridge_AutoAllowWhenSkipRequests(t *testing.T) {
 // rather than auto-denying. Resolve from the UI returns the decision.
 func TestPermissionBridge_TeamSessionShowsPopupWhenSkipOff(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil) // skip=false
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(5 * time.Second)
 
 	ac := actor.ActorContext{SessionID: "s1", TeamID: "team-1", MemberID: "member-1"}
@@ -204,7 +204,7 @@ func TestPermissionBridge_TeamSessionShowsPopupWhenSkipOff(t *testing.T) {
 // gate is gone.
 func TestPermissionBridge_AlwaysShowNotActiveSession(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(5 * time.Second)
 
 	// Active session is a DIFFERENT member than the one making the request.
@@ -252,7 +252,7 @@ func TestPermissionBridge_AlwaysShowNotActiveSession(t *testing.T) {
 // reach the UI event stream.
 func TestPermissionBridge_PublishDelegatesToInner(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), true, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
@@ -276,7 +276,7 @@ func TestPermissionBridge_PublishDelegatesToInner(t *testing.T) {
 // TeamPermissionContext under the request ID, and clears it once resolved.
 func TestPermissionBridge_StoresAndClearsTeamContext(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(5 * time.Second) // generous; we resolve promptly
 
 	tracker := NewActiveSessionTracker()
@@ -338,7 +338,7 @@ func TestPermissionBridge_StoresAndClearsTeamContext(t *testing.T) {
 // TestPermissionBridge_TeamContextFor_NotFound verifies the accessor returns
 // false for an unknown request ID.
 func TestPermissionBridge_TeamContextFor_NotFound(t *testing.T) {
-	bridge := NewPermissionBridge(nil)
+	bridge := NewPermissionBridge("default", nil)
 	_, ok := bridge.TeamContextFor("nope")
 	assert.False(t, ok)
 }
@@ -347,7 +347,7 @@ func TestPermissionBridge_TeamContextFor_NotFound(t *testing.T) {
 // request denies after the bridge-local timeout and clears its state.
 func TestPermissionBridge_TimeoutDeniesAndCleansUp(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(40 * time.Millisecond) // short for the test
 
 	tracker := NewActiveSessionTracker()
@@ -383,7 +383,7 @@ func TestPermissionBridge_TimeoutDeniesAndCleansUp(t *testing.T) {
 // request context returns promptly and clears state.
 func TestPermissionBridge_CtxCancelDeniesAndCleansUp(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(5 * time.Second)
 
 	tracker := NewActiveSessionTracker()
@@ -439,7 +439,7 @@ func TestPermissionBridge_TraceLogging(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	inner := permission.NewPermissionService(t.TempDir(), false, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(5 * time.Second)
 
 	tracker := NewActiveSessionTracker()
@@ -497,7 +497,7 @@ func TestPermissionBridge_TraceLogging(t *testing.T) {
 // pubsub event stream (the TUI only opens a dialog on a Publish event).
 func TestPermissionBridge_SequentialQueue(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(5 * time.Second)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -567,7 +567,7 @@ func TestPermissionBridge_SequentialQueue(t *testing.T) {
 // and can be resolved normally — proving it did not expire while waiting.
 func TestPermissionBridge_FairTimeout(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(200 * time.Millisecond) // short display timer
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -633,7 +633,7 @@ func TestPermissionBridge_FairTimeout(t *testing.T) {
 // timed-out request returns an error and does not panic.
 func TestPermissionBridge_LateResolveNoOp(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(40 * time.Millisecond)
 
 	ac := actor.ActorContext{
@@ -669,7 +669,7 @@ func TestPermissionBridge_LateResolveNoOp(t *testing.T) {
 // displayed request's context removes it and promotes the next waiting request.
 func TestPermissionBridge_CtxCancelAdvancesQueue(t *testing.T) {
 	inner := permission.NewPermissionService(t.TempDir(), false, nil)
-	bridge := NewPermissionBridge(inner)
+	bridge := NewPermissionBridge("default", inner)
 	bridge.SetRequestTimeout(5 * time.Second)
 
 	ctx, cancel := context.WithCancel(t.Context())
