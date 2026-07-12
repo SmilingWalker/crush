@@ -291,6 +291,12 @@ func (b *PermissionBridge) GetQueue() *PermissionQueue {
 	return b.queue
 }
 
+// GrantStore returns the bridge's in-memory GrantStore. Exported so tests can
+// seed an active grant to drive the grant_auto audit path through Request.
+func (b *PermissionBridge) GrantStore() *GrantStore {
+	return b.grantStore
+}
+
 // Request implements the permission check for team sessions.
 // For non-team sessions it delegates directly to inner. For team sessions
 // it checks the active session: if the user is viewing this member's session,
