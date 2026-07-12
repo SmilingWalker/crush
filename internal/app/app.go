@@ -188,24 +188,29 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	// Non-team sessions pass through transparently to the inner service.
 	app.permBridge = team.NewPermissionBridge("default", app.Permissions)
 	app.permBridge.SetAuditFunc(func(ctx context.Context, e team.PermAuditEvent) {
-		// Best-effort persistence: a failure here must not affect the
-		// permission decision that already happened. Log and move on.
-		tx, err := app.db.BeginTx(ctx, nil)
-		if err != nil {
-			slog.Error("Failed to begin permission audit tx",
-				"action", e.Action, "team_id", e.TeamID, "error", err)
-			return
-		}
-		defer tx.Rollback()
-		if err := app.auditStore.AppendAudit(ctx, tx, team.PermEventToAuditEvent(e)); err != nil {
-			slog.Error("Failed to persist permission audit",
-				"action", e.Action, "team_id", e.TeamID, "error", err)
-			return
-		}
-		if err := tx.Commit(); err != nil {
-			slog.Error("Failed to commit permission audit",
-				"action", e.Action, "error", err)
-		}
+		// Fire-and-forget: audit persistence must never block or delay the
+		// permission decision. The production DB uses SetMaxOpenConns(1), so
+		// a synchronous BeginTx could stall behind an unrelated transaction.
+		go func() {
+			auditCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			tx, err := app.db.BeginTx(auditCtx, nil)
+			if err != nil {
+				slog.Error("Failed to begin permission audit tx",
+					"action", e.Action, "team_id", e.TeamID, "error", err)
+				return
+			}
+			defer tx.Rollback()
+			if err := app.auditStore.AppendAudit(auditCtx, tx, team.PermEventToAuditEvent(e)); err != nil {
+				slog.Error("Failed to persist permission audit",
+					"action", e.Action, "team_id", e.TeamID, "error", err)
+				return
+			}
+			if err := tx.Commit(); err != nil {
+				slog.Error("Failed to commit permission audit",
+					"action", e.Action, "error", err)
+			}
+		}()
 	})
 
 	// M5.2: Create shared ActiveSessionTracker, inject into PermissionBridge.

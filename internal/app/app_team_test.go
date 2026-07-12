@@ -90,24 +90,37 @@ func TestPermissionAudit_PersistsToDB(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, allowed, "active grant should auto-allow the request")
 
-	// Verify the audit row landed in team_audit_events.
-	readAudit(t, app.db, app.auditStore, teamID, func(rows []team.AuditEvent) {
-		require.Len(t, rows, 1, "exactly one audit row should be persisted")
-		row := rows[0]
-		assert.Equal(t, "permission.grant_auto", row.EventType)
-		assert.Equal(t, teamID, row.TeamID)
-		// app.New constructs the bridge with workspace "default"; the grant_auto
-		// audit path stamps WorkspaceID from the bridge, so the row carries it.
-		assert.Equal(t, "default", row.WorkspaceID)
-		require.NotNil(t, row.SessionID)
-		assert.Equal(t, sessionID, *row.SessionID)
-		require.NotNil(t, row.ToolCallID)
-		assert.Equal(t, "call-1", *row.ToolCallID)
-		require.NotNil(t, row.Action)
-		assert.Equal(t, "grant_auto", *row.Action)
-		require.NotNil(t, row.Decision)
-		assert.Equal(t, "allowed", *row.Decision)
-	})
+	// Verify the audit row landed in team_audit_events. The app's
+	// SetAuditFunc callback persists fire-and-forget on a goroutine (it must
+	// never block the permission decision under SetMaxOpenConns(1)), so poll
+	// ListAudit until the row appears rather than asserting synchronously.
+	// Poll up to 1s instead of a blind sleep.
+	deadline := time.Now().Add(time.Second)
+	var lastRows []team.AuditEvent
+	for time.Now().Before(deadline) {
+		readAudit(t, app.db, app.auditStore, teamID, func(rows []team.AuditEvent) {
+			lastRows = rows
+		})
+		if len(lastRows) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.Len(t, lastRows, 1, "exactly one audit row should be persisted")
+	row := lastRows[0]
+	assert.Equal(t, "permission.grant_auto", row.EventType)
+	assert.Equal(t, teamID, row.TeamID)
+	// app.New constructs the bridge with workspace "default"; the grant_auto
+	// audit path stamps WorkspaceID from the bridge, so the row carries it.
+	assert.Equal(t, "default", row.WorkspaceID)
+	require.NotNil(t, row.SessionID)
+	assert.Equal(t, sessionID, *row.SessionID)
+	require.NotNil(t, row.ToolCallID)
+	assert.Equal(t, "call-1", *row.ToolCallID)
+	require.NotNil(t, row.Action)
+	assert.Equal(t, "grant_auto", *row.Action)
+	require.NotNil(t, row.Decision)
+	assert.Equal(t, "allowed", *row.Decision)
 }
 
 // seedTeam inserts a minimal teams row so team_audit_events' FK on team_id is
