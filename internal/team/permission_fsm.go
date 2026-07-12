@@ -86,6 +86,7 @@ func (fsm *PermissionFSM) Resolve(ctx context.Context, req ResolveRequest) error
 		}
 
 		fsm.auditFn(ctx, PermAuditEvent{
+			WorkspaceID: permReq.WorkspaceID, SessionID: permReq.SessionID, ToolCallID: permReq.ToolCallID,
 			Action: PermAuditPermissionAllowed, TeamID: permReq.TeamID, MemberID: permReq.MemberID,
 			TaskID: permReq.TaskID, RunID: permReq.RunID, ToolName: permReq.ToolName,
 			Resource: permReq.ResourceRef, Decision: "allowed", Scope: scope, DecidedBy: req.DecidedBy,
@@ -99,6 +100,7 @@ func (fsm *PermissionFSM) Resolve(ctx context.Context, req ResolveRequest) error
 		permReq.DecidedAt = &now
 
 		fsm.auditFn(ctx, PermAuditEvent{
+			WorkspaceID: permReq.WorkspaceID, SessionID: permReq.SessionID, ToolCallID: permReq.ToolCallID,
 			Action: PermAuditPermissionDenied, TeamID: permReq.TeamID, MemberID: permReq.MemberID,
 			TaskID: permReq.TaskID, RunID: permReq.RunID, ToolName: permReq.ToolName,
 			Resource: permReq.ResourceRef, Decision: "denied", DecidedBy: req.DecidedBy,
@@ -123,6 +125,7 @@ func (fsm *PermissionFSM) Expire(ctx context.Context, requestID string) error {
 	}
 	permReq.Status = "expired"
 	fsm.auditFn(ctx, PermAuditEvent{
+		WorkspaceID: permReq.WorkspaceID, SessionID: permReq.SessionID, ToolCallID: permReq.ToolCallID,
 		Action: PermAuditPermissionExpired, TeamID: permReq.TeamID, MemberID: permReq.MemberID,
 		TaskID: permReq.TaskID, RunID: permReq.RunID, ToolName: permReq.ToolName,
 		Timestamp: time.Now(),
@@ -138,6 +141,7 @@ func (fsm *PermissionFSM) Cancel(ctx context.Context, runID string) (int, error)
 		req.Status = "canceled"
 		_ = fsm.store.UpdateRequest(ctx, req)
 		fsm.auditFn(ctx, PermAuditEvent{
+			WorkspaceID: req.WorkspaceID, SessionID: req.SessionID, ToolCallID: req.ToolCallID,
 			Action: PermAuditPermissionCanceled, TeamID: req.TeamID, MemberID: req.MemberID,
 			RunID: req.RunID, ToolName: req.ToolName, Timestamp: time.Now(),
 		})
@@ -153,6 +157,7 @@ func (fsm *PermissionFSM) Orphan(ctx context.Context, memberID string) (int, err
 		req.Status = "orphaned"
 		_ = fsm.store.UpdateRequest(ctx, req)
 		fsm.auditFn(ctx, PermAuditEvent{
+			WorkspaceID: req.WorkspaceID, SessionID: req.SessionID, ToolCallID: req.ToolCallID,
 			Action: PermAuditPermissionOrphaned, TeamID: req.TeamID, MemberID: req.MemberID,
 			RunID: req.RunID, ToolName: req.ToolName, Timestamp: time.Now(),
 		})
