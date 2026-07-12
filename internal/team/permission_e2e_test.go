@@ -25,7 +25,8 @@ func TestM5_PermissionFlow_RequestResolve(t *testing.T) {
 
 	// Create a pending request.
 	req := &PermissionRequest{
-		ID: "e2e-r1", TeamID: "t1", MemberID: "m1", SessionID: "s1", RunID: "run1",
+		ID: "e2e-r1", WorkspaceID: "default", TeamID: "t1", MemberID: "m1",
+		SessionID: "s1", ToolCallID: "call-r1", RunID: "run1",
 		ToolName: "bash", Action: "execute", ResourceRef: "go test",
 		Status: "pending", RequestedScope: "call",
 		CreatedAt: time.Now(),
@@ -48,9 +49,12 @@ func TestM5_PermissionFlow_RequestResolve(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "task", grant.Scope)
 
-	// Verify audit event recorded.
-	assert.Equal(t, 1, len(auditEvents))
+	// Verify audit event recorded with the 3 context IDs backfilled (M5-08a).
+	require.Equal(t, 1, len(auditEvents))
 	assert.Equal(t, PermAuditPermissionAllowed, auditEvents[0].Action)
+	assert.Equal(t, "default", auditEvents[0].WorkspaceID)
+	assert.Equal(t, "s1", auditEvents[0].SessionID)
+	assert.Equal(t, "call-r1", auditEvents[0].ToolCallID)
 }
 
 // TestM5_PermissionFlow_Deny verifies the deny path: no grant created.
@@ -65,7 +69,8 @@ func TestM5_PermissionFlow_Deny(t *testing.T) {
 	ctx := context.Background()
 
 	req := &PermissionRequest{
-		ID: "e2e-r2", TeamID: "t1", MemberID: "m1", SessionID: "s2", RunID: "run1",
+		ID: "e2e-r2", WorkspaceID: "default", TeamID: "t1", MemberID: "m1",
+		SessionID: "s2", ToolCallID: "call-r2", RunID: "run1",
 		ToolName: "write", Action: "write", Status: "pending",
 		CreatedAt: time.Now(),
 	}
@@ -83,8 +88,11 @@ func TestM5_PermissionFlow_Deny(t *testing.T) {
 	_, ok := gs.FindActiveGrant(ctx, "s2", "write", "write")
 	assert.False(t, ok)
 
-	assert.Equal(t, 1, len(auditEvents))
+	require.Equal(t, 1, len(auditEvents))
 	assert.Equal(t, PermAuditPermissionDenied, auditEvents[0].Action)
+	assert.Equal(t, "default", auditEvents[0].WorkspaceID)
+	assert.Equal(t, "s2", auditEvents[0].SessionID)
+	assert.Equal(t, "call-r2", auditEvents[0].ToolCallID)
 }
 
 // TestM5_QueueExpiry_E2E verifies that queued requests auto-expire via the
@@ -125,7 +133,8 @@ func TestM5_FullFlow_RequestQueueResolve(t *testing.T) {
 	ctx := context.Background()
 
 	req := &PermissionRequest{
-		ID: "e2e-full", TeamID: "t1", MemberID: "m2", SessionID: "s3", RunID: "run2",
+		ID: "e2e-full", WorkspaceID: "default", TeamID: "t1", MemberID: "m2",
+		SessionID: "s3", ToolCallID: "call-full", RunID: "run2",
 		ToolName: "edit", Action: "write", ResourceRef: "main.go",
 		Status: "pending", RequestedScope: "call",
 		CreatedAt: time.Now(),
@@ -150,9 +159,12 @@ func TestM5_FullFlow_RequestQueueResolve(t *testing.T) {
 	assert.Equal(t, "session", grant.Scope)
 
 	// Audit: permission_requested (not recorded by enqueue alone in current impl),
-	// permission_allowed (from fsm.Resolve).
-	assert.Equal(t, 1, len(auditEvents))
+	// permission_allowed (from fsm.Resolve) with the 3 context IDs backfilled (M5-08a).
+	require.Equal(t, 1, len(auditEvents))
 	assert.Equal(t, PermAuditPermissionAllowed, auditEvents[0].Action)
+	assert.Equal(t, "default", auditEvents[0].WorkspaceID)
+	assert.Equal(t, "s3", auditEvents[0].SessionID)
+	assert.Equal(t, "call-full", auditEvents[0].ToolCallID)
 }
 
 // TestM5_Cancel_AllPendingForRun verifies that Cancel marks all pending
@@ -169,11 +181,13 @@ func TestM5_Cancel_AllPendingForRun(t *testing.T) {
 
 	// Create two pending requests for run1.
 	r1 := &PermissionRequest{
-		ID: "c1", RunID: "run1", TeamID: "t1", MemberID: "m1",
+		ID: "c1", WorkspaceID: "default", RunID: "run1", TeamID: "t1", MemberID: "m1",
+		SessionID: "s-c1", ToolCallID: "call-c1",
 		ToolName: "bash", Status: "pending", CreatedAt: time.Now(),
 	}
 	r2 := &PermissionRequest{
-		ID: "c2", RunID: "run1", TeamID: "t1", MemberID: "m1",
+		ID: "c2", WorkspaceID: "default", RunID: "run1", TeamID: "t1", MemberID: "m1",
+		SessionID: "s-c2", ToolCallID: "call-c2",
 		ToolName: "write", Status: "pending", CreatedAt: time.Now(),
 	}
 	ps.CreateRequest(ctx, r1)
@@ -189,8 +203,20 @@ func TestM5_Cancel_AllPendingForRun(t *testing.T) {
 	got2, _ := ps.GetRequest(ctx, "c2")
 	assert.Equal(t, "canceled", got2.Status)
 
-	// Two audit events emitted.
-	assert.Equal(t, 2, len(auditEvents))
+	// Two audit events emitted, each carrying its own context IDs (M5-08a).
+	require.Equal(t, 2, len(auditEvents))
+	// Cancel iterates store rows; assert each expected triple is present.
+	byID := map[string]PermAuditEvent{auditEvents[0].ToolCallID: auditEvents[0], auditEvents[1].ToolCallID: auditEvents[1]}
+	for _, want := range []struct{ id, sess string }{
+		{"call-c1", "s-c1"}, {"call-c2", "s-c2"},
+	} {
+		ev, ok := byID[want.id]
+		require.True(t, ok, "missing audit event for %s", want.id)
+		assert.Equal(t, "default", ev.WorkspaceID)
+		assert.Equal(t, want.sess, ev.SessionID)
+		assert.Equal(t, want.id, ev.ToolCallID)
+		assert.Equal(t, PermAuditPermissionCanceled, ev.Action)
+	}
 }
 
 // TestM5_Orphan_MarksMemberPendingAsOrphaned verifies that Orphan marks all
@@ -206,7 +232,8 @@ func TestM5_Orphan_MarksMemberPendingAsOrphaned(t *testing.T) {
 	ctx := context.Background()
 
 	r1 := &PermissionRequest{
-		ID: "o1", MemberID: "m1", TeamID: "t1", RunID: "run1",
+		ID: "o1", WorkspaceID: "default", MemberID: "m1", TeamID: "t1", RunID: "run1",
+		SessionID: "s-o1", ToolCallID: "call-o1",
 		ToolName: "bash", Status: "pending", CreatedAt: time.Now(),
 	}
 	ps.CreateRequest(ctx, r1)
@@ -218,8 +245,11 @@ func TestM5_Orphan_MarksMemberPendingAsOrphaned(t *testing.T) {
 	got, _ := ps.GetRequest(ctx, "o1")
 	assert.Equal(t, "orphaned", got.Status)
 
-	assert.Equal(t, 1, len(auditEvents))
+	require.Equal(t, 1, len(auditEvents))
 	assert.Equal(t, PermAuditPermissionOrphaned, auditEvents[0].Action)
+	assert.Equal(t, "default", auditEvents[0].WorkspaceID)
+	assert.Equal(t, "s-o1", auditEvents[0].SessionID)
+	assert.Equal(t, "call-o1", auditEvents[0].ToolCallID)
 }
 
 // TestM5_NonTeamSessionUnchanged verifies that non-team sessions pass through

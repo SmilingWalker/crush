@@ -132,6 +132,60 @@ func TestPermissionBridge_SetAuditFunc(t *testing.T) {
 	assert.True(t, called)
 }
 
+// TestPermissionBridge_GrantAutoAuditCarriesContextIDs is the M5-08a Task 6
+// bridge-level assertion: when the bridge fires its audit callback on the
+// grant_auto path (an active grant matches the incoming request), the captured
+// PermAuditEvent must carry the bridge's workspaceID plus the SessionID and
+// ToolCallID from the CreatePermissionRequest — proving the 3 new fields
+// propagate end-to-end through the bridge's own auditFn.
+//
+// The grant_auto branch is the only Request path that calls b.auditFn
+// synchronously (the requestWithUI/ResolveRequest flow signals via entry.ch and
+// does not emit from the bridge), so it is the canonical path to assert on here.
+func TestPermissionBridge_GrantAutoAuditCarriesContextIDs(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil) // skip=false (would also auto-allow but bypass grant lookup)
+	bridge := NewPermissionBridge("default", inner)
+
+	// Seed an active grant so Request hits the grant_auto branch and fires auditFn.
+	grant := &Grant{
+		ID:        "grant-ctx",
+		TeamID:    "team-1",
+		MemberID:  "member-1",
+		SessionID: "sess-test",
+		ToolName:  "bash",
+		Action:    "execute",
+		Scope:     "session",
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+	require.NoError(t, bridge.GrantStore().CreateGrant(t.Context(), grant))
+
+	var captured *PermAuditEvent
+	bridge.SetAuditFunc(func(ctx context.Context, event PermAuditEvent) {
+		c := event
+		captured = &c
+	})
+
+	ac := actor.ActorContext{
+		SessionID: "sess-test", TeamID: "team-1", MemberID: "member-1",
+	}
+	ctx := ac.WithContext(t.Context())
+
+	allowed, err := bridge.Request(ctx, permission.CreatePermissionRequest{
+		SessionID:  "sess-test",
+		ToolCallID: "call-test",
+		ToolName:   "bash",
+		Action:     "execute",
+	})
+	require.NoError(t, err)
+	assert.True(t, allowed, "active grant should auto-allow")
+
+	require.NotNil(t, captured, "grant_auto path should fire auditFn")
+	require.Equal(t, "default", captured.WorkspaceID, "WorkspaceID should come from bridge")
+	require.Equal(t, "sess-test", captured.SessionID, "SessionID should come from request opts")
+	require.Equal(t, "call-test", captured.ToolCallID, "ToolCallID should come from request opts")
+	require.Equal(t, PermAuditGrantAuto, captured.Action)
+}
+
 func TestPermissionBridge_ResolveRequest_NotFound(t *testing.T) {
 	bridge := NewPermissionBridge("default", nil)
 	err := bridge.ResolveRequest("nonexistent", true, "call")
