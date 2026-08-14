@@ -84,6 +84,28 @@ internal/
 - **CGO disabled**: builds with `CGO_ENABLED=0` and
   `GOEXPERIMENT=greenteagc`.
 
+## Build Environment Notes
+
+- The default Go module proxy (`proxy.golang.org`) is unreachable on this
+  machine. Always build/test with
+  `GOPROXY=https://goproxy.cn,direct go build ./...` (or export it in your
+  shell). Without it, the automatic toolchain download (go.mod requires a
+  newer Go than the Homebrew-installed one) hangs with i/o timeout.
+- Go module path requires Go 1.26.5 via toolchain auto-download; the first
+  build after a toolchain bump downloads it through the mirror above.
+
+## Agent-Team Branch Progress (updated 2026-08-14)
+
+- Milestone: M5 permission bridge (see
+  `docs/agent-team-mode/plan/tasks/06-m5-permission-bridge.md`).
+- Done: M5-08a (permission audit persisted to `team_audit_events` via
+  `AppendAudit`) and M5-08b (`permission_requested` + `late_response` audit
+  events fired in `internal/team/permission_bridge.go`).
+- Audit coverage: 8 of 10 declared `PermAuditAction` values are wired;
+  `hook_allow`/`hook_deny` are only logged in
+  `internal/agent/hooked_tool.go` — that is task M5-09 (next up), followed by
+  the M5-10 E2E tests.
+
 ## Build/Test/Lint Commands
 
 - **Build**: `go build .` or `go run .`
