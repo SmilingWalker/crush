@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/crush/internal/actor"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1034,4 +1035,43 @@ func TestPermissionStore_Update_Concurrent(t *testing.T) {
 		count++
 	}
 	assert.Equal(t, 1, count, "exactly one concurrent transition must win")
+}
+
+// TestPermissionBridge_ConcurrentSettersAndRequest exercises setter-field
+// reads on the live request path. Functionally it only asserts Request
+// returns; under -race an unsynchronized read/write pair trips the detector.
+func TestPermissionBridge_ConcurrentSettersAndRequest(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge("default", inner)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			bridge.SetAuditFunc(func(ctx context.Context, e PermAuditEvent) {})
+			bridge.SetRequestTimeout(time.Duration(50+i%10) * time.Millisecond)
+		}
+	}()
+
+	ac := actor.ActorContext{
+		SessionID: "s-race", TeamID: "team-r", MemberID: "m-r",
+		MemberName: "m", MemberRole: "programmer",
+	}
+	for range 3 {
+		ctx, cancel := context.WithTimeout(ac.WithContext(t.Context()), 150*time.Millisecond)
+		_, _ = bridge.Request(ctx, permission.CreatePermissionRequest{
+			SessionID: "s-race", ToolCallID: uuid.New().String(), ToolName: "write",
+			Action: "write", Description: "test", Path: "/tmp/x",
+		})
+		cancel()
+	}
+	close(stop)
+	wg.Wait()
 }

@@ -278,18 +278,24 @@ func NewPermissionBridge(workspaceID string, inner permission.Service) *Permissi
 
 // SetAuditFunc sets the audit callback for permission events.
 func (b *PermissionBridge) SetAuditFunc(fn PermAuditFunc) {
+	b.queueMu.Lock()
+	defer b.queueMu.Unlock()
 	b.auditFn = fn
 }
 
 // SetActiveSessionTracker injects the shared ActiveSessionTracker from app.go.
 // Must be called before any team member tool calls. Caller owns the tracker lifecycle.
 func (b *PermissionBridge) SetActiveSessionTracker(t *ActiveSessionTracker) {
+	b.queueMu.Lock()
+	defer b.queueMu.Unlock()
 	b.tracker = t
 }
 
 // SetRequestTimeout overrides how long requestWithUI waits for a UI decision
 // before denying. Intended for tests.
 func (b *PermissionBridge) SetRequestTimeout(d time.Duration) {
+	b.queueMu.Lock()
+	defer b.queueMu.Unlock()
 	b.requestTimeout = d
 }
 
@@ -320,10 +326,14 @@ func (b *PermissionBridge) GrantStore() *GrantStore {
 // it shows a permission dialog; otherwise it uses the SkipRequests gate.
 func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePermissionRequest) (bool, error) {
 	ac, hasTeam := actor.FromContext(ctx)
+	b.queueMu.Lock()
+	auditFn := b.auditFn
+	hasTracker := b.tracker != nil
+	b.queueMu.Unlock()
 	slog.Debug("perm_bridge: request",
 		"team_id", ac.TeamID, "member_id", ac.MemberID, "session_id", opts.SessionID,
 		"tool", opts.ToolName, "action", opts.Action, "tool_call_id", opts.ToolCallID,
-		"has_team", hasTeam, "tracker_set", b.tracker != nil,
+		"has_team", hasTeam, "tracker_set", hasTracker,
 	)
 	if !hasTeam || ac.TeamID == "" || ac.MemberID == "" {
 		// Non-team session — delegate to inner (leader normal flow).
@@ -334,7 +344,7 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 	// Check existing grants first (call scope).
 	if grant, ok := b.grantStore.FindActiveGrant(ctx, opts.SessionID, opts.ToolName, opts.Action); ok {
 		slog.Debug("perm_bridge: active grant found (auto-allow)", "tool_call_id", opts.ToolCallID, "scope", grant.Scope)
-		b.auditFn(ctx, PermAuditEvent{
+		auditFn(ctx, PermAuditEvent{
 			WorkspaceID: b.workspaceID, SessionID: opts.SessionID, ToolCallID: opts.ToolCallID,
 			Action: PermAuditGrantAuto, TeamID: ac.TeamID, MemberID: ac.MemberID,
 			ToolName: opts.ToolName, Decision: "allowed", Scope: grant.Scope, Timestamp: time.Now(),
@@ -357,6 +367,11 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 // the context is cancelled. The timer starts only when the entry becomes the
 // displayed slot (fair timeout).
 func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.CreatePermissionRequest, ac actor.ActorContext) (bool, error) {
+	b.queueMu.Lock()
+	auditFn := b.auditFn
+	requestTimeout := b.requestTimeout
+	b.queueMu.Unlock()
+
 	reqID := opts.ToolCallID
 	if reqID == "" {
 		reqID = uuid.New().String()
@@ -387,7 +402,7 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 		Action:     opts.Action,
 		Status:     "pending",
 		CreatedAt:  now,
-		ExpiresAt:  now.Add(b.requestTimeout),
+		ExpiresAt:  now.Add(requestTimeout),
 	}
 
 	b.queueMu.Lock()
@@ -398,7 +413,7 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 	b.queueMu.Unlock()
 
 	// M5-08b: audit that a team permission request was enqueued for UI decision.
-	b.auditFn(ctx, PermAuditEvent{
+	auditFn(ctx, PermAuditEvent{
 		WorkspaceID: b.workspaceID, SessionID: opts.SessionID, ToolCallID: reqID,
 		Action: PermAuditPermissionRequested, TeamID: ac.TeamID, MemberID: ac.MemberID,
 		TaskID: ac.TaskID, RunID: ac.RunID, ToolName: opts.ToolName,
@@ -463,12 +478,13 @@ func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope stri
 	b.queueMu.Lock()
 	entry, ok := b.entries[reqID]
 	if !ok {
+		auditFn := b.auditFn
 		b.queueMu.Unlock()
 		slog.Debug("perm_bridge: ResolveRequest not pending (late or unknown)", "tool_call_id", reqID)
 		// M5-08b: audit the late response. We cannot distinguish "never existed"
 		// from "already terminated" here — reqID is a program-generated UUID, so
 		// treating all misses as late_response is acceptable.
-		b.auditFn(context.Background(), PermAuditEvent{
+		auditFn(context.Background(), PermAuditEvent{
 			WorkspaceID: b.workspaceID, ToolCallID: reqID,
 			Action: PermAuditLateResponse, Timestamp: time.Now(),
 		})
