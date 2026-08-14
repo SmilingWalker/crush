@@ -158,8 +158,8 @@ func TestM5_FullFlow_RequestQueueResolve(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "session", grant.Scope)
 
-	// Audit: permission_requested (not recorded by enqueue alone in current impl),
-	// permission_allowed (from fsm.Resolve) with the 3 context IDs backfilled (M5-08a).
+	// Audit: enqueue alone records no permission_requested event; fsm.Resolve
+	// emits permission_allowed with the 3 context IDs backfilled (M5-08a).
 	require.Equal(t, 1, len(auditEvents))
 	assert.Equal(t, PermAuditPermissionAllowed, auditEvents[0].Action)
 	assert.Equal(t, "default", auditEvents[0].WorkspaceID)

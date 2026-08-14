@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -23,7 +24,9 @@ type ResolveRequest struct {
 type PermissionFSM struct {
 	store      *PermissionStore
 	grantStore *GrantStore
-	auditFn    PermAuditFunc
+	// mu guards auditFn, replaceable after construction via SetAuditFunc.
+	mu      sync.Mutex
+	auditFn PermAuditFunc
 }
 
 // NewPermissionFSM creates a new PermissionFSM.
@@ -32,6 +35,24 @@ func NewPermissionFSM(store *PermissionStore, grantStore *GrantStore, auditFn Pe
 		store:      store,
 		grantStore: grantStore,
 		auditFn:    auditFn,
+	}
+}
+
+// SetAuditFunc replaces the audit callback (propagated from the bridge).
+func (fsm *PermissionFSM) SetAuditFunc(fn PermAuditFunc) {
+	fsm.mu.Lock()
+	defer fsm.mu.Unlock()
+	fsm.auditFn = fn
+}
+
+// audit emits an event through the current audit callback. The callback runs
+// outside fsm.mu so it may persist to storage without holding the lock.
+func (fsm *PermissionFSM) audit(ctx context.Context, event PermAuditEvent) {
+	fsm.mu.Lock()
+	fn := fsm.auditFn
+	fsm.mu.Unlock()
+	if fn != nil {
+		fn(ctx, event)
 	}
 }
 
@@ -62,7 +83,7 @@ func (fsm *PermissionFSM) Resolve(ctx context.Context, req ResolveRequest) error
 	}
 
 	if req.Decision == "denied" {
-		fsm.auditFn(ctx, PermAuditEvent{
+		fsm.audit(ctx, PermAuditEvent{
 			WorkspaceID: updated.WorkspaceID, SessionID: updated.SessionID, ToolCallID: updated.ToolCallID,
 			Action: PermAuditPermissionDenied, TeamID: updated.TeamID, MemberID: updated.MemberID,
 			TaskID: updated.TaskID, RunID: updated.RunID, ToolName: updated.ToolName,
@@ -76,35 +97,34 @@ func (fsm *PermissionFSM) Resolve(ctx context.Context, req ResolveRequest) error
 	if scope == "" {
 		scope = "call"
 	}
-	grant := &Grant{
-		ID:              fmt.Sprintf("grant-%d", time.Now().UnixNano()),
-		WorkspaceID:     updated.WorkspaceID,
-		TeamID:          updated.TeamID,
-		MemberID:        updated.MemberID,
-		TaskID:          updated.TaskID,
-		SessionID:       updated.SessionID,
-		ToolName:        updated.ToolName,
-		Action:          updated.Action,
-		ResourceType:    updated.ResourceType,
-		ResourceRef:     updated.ResourceRef,
-		Scope:           scope,
-		SourceRequestID: updated.ID,
-		CreatedAt:       now,
-	}
-	switch scope {
-	case "call":
-		grant.ExpiresAt = now.Add(30 * time.Minute)
-	case "task":
-		grant.ExpiresAt = now.Add(24 * time.Hour)
-	case "session":
-		grant.ExpiresAt = now.Add(7 * 24 * time.Hour)
+	if scope != "call" {
+		grant := &Grant{
+			ID:              fmt.Sprintf("grant-%d", time.Now().UnixNano()),
+			WorkspaceID:     updated.WorkspaceID,
+			TeamID:          updated.TeamID,
+			MemberID:        updated.MemberID,
+			TaskID:          updated.TaskID,
+			SessionID:       updated.SessionID,
+			ToolName:        updated.ToolName,
+			Action:          updated.Action,
+			ResourceType:    updated.ResourceType,
+			ResourceRef:     updated.ResourceRef,
+			Scope:           scope,
+			SourceRequestID: updated.ID,
+			CreatedAt:       now,
+		}
+		switch scope {
+		case "task":
+			grant.ExpiresAt = now.Add(24 * time.Hour)
+		case "session":
+			grant.ExpiresAt = now.Add(7 * 24 * time.Hour)
+		}
+		if err := fsm.grantStore.CreateGrant(ctx, grant); err != nil {
+			return fmt.Errorf("resolve: create grant: %w", err)
+		}
 	}
 
-	if err := fsm.grantStore.CreateGrant(ctx, grant); err != nil {
-		return fmt.Errorf("resolve: create grant: %w", err)
-	}
-
-	fsm.auditFn(ctx, PermAuditEvent{
+	fsm.audit(ctx, PermAuditEvent{
 		WorkspaceID: updated.WorkspaceID, SessionID: updated.SessionID, ToolCallID: updated.ToolCallID,
 		Action: PermAuditPermissionAllowed, TeamID: updated.TeamID, MemberID: updated.MemberID,
 		TaskID: updated.TaskID, RunID: updated.RunID, ToolName: updated.ToolName,
@@ -129,9 +149,34 @@ func (fsm *PermissionFSM) Expire(ctx context.Context, requestID string) error {
 	if err != nil {
 		return fmt.Errorf("expire: %w", err)
 	}
-	fsm.auditFn(ctx, PermAuditEvent{
+	fsm.audit(ctx, PermAuditEvent{
 		WorkspaceID: updated.WorkspaceID, SessionID: updated.SessionID, ToolCallID: updated.ToolCallID,
 		Action: PermAuditPermissionExpired, TeamID: updated.TeamID, MemberID: updated.MemberID,
+		TaskID: updated.TaskID, RunID: updated.RunID, ToolName: updated.ToolName,
+		Timestamp: time.Now(),
+	})
+	return nil
+}
+
+// CancelRequest marks a single pending request as canceled (e.g. the member's
+// context went away). Idempotent: already-resolved requests return nil.
+func (fsm *PermissionFSM) CancelRequest(ctx context.Context, requestID string) error {
+	updated, err := fsm.store.Update(ctx, requestID, func(r *PermissionRequest) error {
+		if r.Status != "pending" {
+			return errNotPending
+		}
+		r.Status = "canceled"
+		return nil
+	})
+	if errors.Is(err, errNotPending) {
+		return nil // already resolved — idempotent
+	}
+	if err != nil {
+		return fmt.Errorf("cancel request: %w", err)
+	}
+	fsm.audit(ctx, PermAuditEvent{
+		WorkspaceID: updated.WorkspaceID, SessionID: updated.SessionID, ToolCallID: updated.ToolCallID,
+		Action: PermAuditPermissionCanceled, TeamID: updated.TeamID, MemberID: updated.MemberID,
 		TaskID: updated.TaskID, RunID: updated.RunID, ToolName: updated.ToolName,
 		Timestamp: time.Now(),
 	})
@@ -158,7 +203,7 @@ func (fsm *PermissionFSM) Cancel(ctx context.Context, runID string) (int, error)
 			return count, fmt.Errorf("cancel: %w", err)
 		}
 		count++
-		fsm.auditFn(ctx, PermAuditEvent{
+		fsm.audit(ctx, PermAuditEvent{
 			WorkspaceID: updated.WorkspaceID, SessionID: updated.SessionID, ToolCallID: updated.ToolCallID,
 			Action: PermAuditPermissionCanceled, TeamID: updated.TeamID, MemberID: updated.MemberID,
 			RunID: updated.RunID, ToolName: updated.ToolName, Timestamp: time.Now(),
@@ -187,7 +232,7 @@ func (fsm *PermissionFSM) Orphan(ctx context.Context, memberID string) (int, err
 			return count, fmt.Errorf("orphan: %w", err)
 		}
 		count++
-		fsm.auditFn(ctx, PermAuditEvent{
+		fsm.audit(ctx, PermAuditEvent{
 			WorkspaceID: updated.WorkspaceID, SessionID: updated.SessionID, ToolCallID: updated.ToolCallID,
 			Action: PermAuditPermissionOrphaned, TeamID: updated.TeamID, MemberID: updated.MemberID,
 			RunID: updated.RunID, ToolName: updated.ToolName, Timestamp: time.Now(),

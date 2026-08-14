@@ -39,9 +39,8 @@ func TestFSM_Resolve_Allowed_CallScope(t *testing.T) {
 	assert.Equal(t, "allowed", got.Status)
 	assert.Equal(t, "call", got.DecisionScope)
 
-	grant, ok := gs.FindActiveGrant(ctx, "s1", "bash", "execute")
-	assert.True(t, ok)
-	assert.Equal(t, "call", grant.Scope)
+	_, ok := gs.FindActiveGrant(ctx, "s1", "bash", "execute")
+	assert.False(t, ok, "allow-once must not create a grant")
 }
 
 func TestFSM_Resolve_Denied(t *testing.T) {
@@ -88,6 +87,53 @@ func TestFSM_Expire(t *testing.T) {
 
 	got, _ := ps.GetRequest(ctx, "r4")
 	assert.Equal(t, "expired", got.Status)
+}
+
+func TestFSM_SetAuditFunc_Propagates(t *testing.T) {
+	ps := NewPermissionStore()
+	gs := NewGrantStore()
+	fsm := NewPermissionFSM(ps, gs, func(ctx context.Context, e PermAuditEvent) {})
+
+	var mu sync.Mutex
+	var events []PermAuditEvent
+	fsm.SetAuditFunc(func(ctx context.Context, e PermAuditEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, e)
+	})
+
+	ctx := context.Background()
+	require.NoError(t, ps.CreateRequest(ctx, &PermissionRequest{
+		ID: "saf1", TeamID: "t1", MemberID: "m1", SessionID: "s1",
+		ToolName: "bash", Action: "execute", Status: "pending", CreatedAt: time.Now(),
+	}))
+	require.NoError(t, fsm.Expire(ctx, "saf1"))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, events, 1)
+	assert.Equal(t, PermAuditPermissionExpired, events[0].Action)
+}
+
+func TestFSM_CancelRequest_Pending(t *testing.T) {
+	fsm, ps, _ := setupFSM(t)
+	ctx := context.Background()
+	require.NoError(t, ps.CreateRequest(ctx, &PermissionRequest{
+		ID: "cr1", TeamID: "t1", MemberID: "m1", Status: "pending", CreatedAt: time.Now(),
+	}))
+	require.NoError(t, fsm.CancelRequest(ctx, "cr1"))
+	got, _ := ps.GetRequest(ctx, "cr1")
+	assert.Equal(t, "canceled", got.Status)
+}
+
+func TestFSM_CancelRequest_IdempotentAndNotFound(t *testing.T) {
+	fsm, ps, _ := setupFSM(t)
+	ctx := context.Background()
+	require.NoError(t, ps.CreateRequest(ctx, &PermissionRequest{
+		ID: "cr2", Status: "allowed", CreatedAt: time.Now(),
+	}))
+	require.NoError(t, fsm.CancelRequest(ctx, "cr2"), "non-pending must be an idempotent no-op")
+	require.Error(t, fsm.CancelRequest(ctx, "nope"), "unknown ID must error")
 }
 
 func TestPermissionFSM_Resolve_Concurrent(t *testing.T) {
@@ -140,9 +186,5 @@ func TestPermissionFSM_Resolve_Concurrent(t *testing.T) {
 	gs.mu.RLock()
 	grantCount := len(gs.grants)
 	gs.mu.RUnlock()
-	if got.Status == "allowed" {
-		assert.Equal(t, 1, grantCount)
-	} else {
-		assert.Equal(t, 0, grantCount)
-	}
+	assert.Equal(t, 0, grantCount, "allow-once must not create a grant")
 }
