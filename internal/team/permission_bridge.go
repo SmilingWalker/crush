@@ -9,6 +9,7 @@ package team
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -507,9 +508,11 @@ func (b *PermissionBridge) terminateEntry(reqID string) {
 }
 
 // ResolveRequest is called by the UI when the user decides a pending request.
-// It terminates the entry, advances the queue if it was displayed, and feeds
-// the decision to the blocking goroutine. Returns an error if the entry was
-// already terminated (resolved/timed out/cancelled).
+// It terminates the entry, advances the queue if it was displayed, records the
+// decision through the FSM, and feeds the outcome to the blocking goroutine.
+// Returns an error only if the entry was already terminated. If the store row
+// already left pending (TTL expiry or cancel raced the decision), the member
+// is denied and the decision is audited as a late response.
 func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope string) error {
 	b.queueMu.Lock()
 	entry, ok := b.entries[reqID]
@@ -552,6 +555,13 @@ func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope stri
 	if err := b.fsm.Resolve(context.Background(), ResolveRequest{
 		RequestID: reqID, Decision: decision, Scope: scope, DecidedBy: "user",
 	}); err != nil {
+		if !errors.Is(err, errNotPending) {
+			// Unexpected failure (e.g. grant creation after the status write):
+			// deny the member, log loudly, and do not mislabel it as late.
+			slog.Error("perm_bridge: ResolveRequest unexpected FSM failure", "tool_call_id", reqID, "error", err)
+			entry.ch <- false
+			return nil
+		}
 		// The store row already left pending (TTL expiry or cancel raced us):
 		// a late decision — audit it and deny the member. No grant is created.
 		slog.Debug("perm_bridge: resolve raced by terminal state, denying", "tool_call_id", reqID, "error", err)

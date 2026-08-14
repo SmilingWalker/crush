@@ -67,7 +67,7 @@ func (fsm *PermissionFSM) Resolve(ctx context.Context, req ResolveRequest) error
 	now := time.Now()
 	updated, err := fsm.store.Update(ctx, req.RequestID, func(r *PermissionRequest) error {
 		if r.Status != "pending" {
-			return fmt.Errorf("request %s is not pending (status=%s)", req.RequestID, r.Status)
+			return fmt.Errorf("%w: request %s (status=%s)", errNotPending, req.RequestID, r.Status)
 		}
 		r.Status = req.Decision
 		r.Decision = req.Decision
