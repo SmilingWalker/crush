@@ -13,16 +13,16 @@
 
 ## A. 并发问题（`go test -race ./internal/team/` 当前红色）
 
-### [ ] A1. PermissionFSM 在 store 锁外修改共享指针
+### [x] A1. PermissionFSM 在 store 锁外修改共享指针
 - 位置：`internal/team/permission_fsm.go:48-52, 141, 157`
 - `GetRequest`/`ListByRun` 返回 map 中的指针，bridge 在 RLock 下读
   `req.Status`（`permission_bridge.go:196, 209`），FSM 写侧无锁。
 
-### [ ] A2. bridge 配置字段 setter 写 / Request 读无同步
+### [x] A2. bridge 配置字段 setter 写 / Request 读无同步
 - 位置：`internal/team/permission_bridge.go:263-277` vs `:309-320`
 - `auditFn`/`tracker`/`requestTimeout` 应由 `queueMu` 保护或改为构造注入。
 
-### [ ] A3. 测试 fake 无同步读写（-race 实测命中）
+### [x] A3. 测试 fake 无同步读写（-race 实测命中）
 - 位置：`internal/team/member_runner_test.go:173` vs `:221`
 - `recordingTurnRunner` 的字段被 runner goroutine 写、测试 goroutine 读。
 
@@ -33,6 +33,10 @@
 ### [ ] A5. shutdown 后 member 状态写库竞态（-race 伴随出现）
 - 位置：`TestMemberRunner_handleWake_RunError` 报 `sql: database is closed`
 - member 状态迁移在 DB 关闭后仍在执行，shutdown 顺序需要收口。
+
+### [ ] A6. delegate_runner.go:201 trailing goroutine slog.Debug 无锁读 group.Status（潜在竞态，-race 现未触发）
+
+### [ ] A7. permission_queue.go 定时器回调读 req.ID 且捕获 caller ctx（现安全；对应原 E2/E3 硬化）
 
 ## B. 生命周期断线（根因：display 队列与 FSM/store 两套平行实现）
 
@@ -113,4 +117,7 @@
 
 | 日期 | 问题 | Commit | 备注 |
 |------|------|--------|------|
-|      |      |        |      |
+| 2026-08-14 | A1 | d5d6ff2b, 5b11000b | store Update+copies；FSM 状态迁移改走原子 Update |
+| 2026-08-14 | A2 | 0585ea56 | setter 字段以 queueMu 同步 |
+| 2026-08-14 | A3 | b6791aa7, d7b0a4f4 | fakes 同步 + delegate/queue 后续修复；全包 -race 绿 |
+| 2026-08-14 | 超出原范围 | 67bfcd6b | CreateRequest 防御性拷贝，修复 A1 暴露的竞态 |
