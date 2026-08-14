@@ -94,17 +94,22 @@ internal/
 - Go module path requires Go 1.26.5 via toolchain auto-download; the first
   build after a toolchain bump downloads it through the mirror above.
 
-## Agent-Team Branch Progress (updated 2026-08-14)
+## Agent-Team Branch Progress (updated 2026-08-15)
 
 - Milestone: M5 permission bridge (see
   `docs/agent-team-mode/plan/tasks/06-m5-permission-bridge.md`).
-- Done: M5-08a (permission audit persisted to `team_audit_events` via
-  `AppendAudit`) and M5-08b (`permission_requested` + `late_response` audit
-  events fired in `internal/team/permission_bridge.go`).
-- Audit coverage: 8 of 10 declared `PermAuditAction` values are wired;
-  `hook_allow`/`hook_deny` are only logged in
-  `internal/agent/hooked_tool.go` — that is task M5-09 (next up), followed by
-  the M5-10 E2E tests.
+- Done: M5-08a/08b (audit persistence + events); race-fix series A1-A3
+  (store atomic Update, bridge setter sync, fakes — `go test -race
+  ./internal/team/` green); lifecycle wiring B1-B4 + C1 (requests persist,
+  UI decisions route through `fsm.Resolve` with scope semantics: allow-once
+  creates no grant, task grants match own task; timeout → expired; ctx
+  cancel → canceled; late decisions audited + denied).
+- Remaining backlog lives in
+  `docs/superpowers/plans/2026-08-14-code-scan-backlog.md`. Next up: M5-09
+  (hook_allow/hook_deny wiring — the bridge entry point needs a `DecidedBy`
+  parameter), E4 store eviction, DB-backed stores.
+- Known pre-existing failure: `TestCoderAgent` in `internal/agent` (golden
+  drift after upstream v0.84.0 merge, backlog F3).
 
 ## Build/Test/Lint Commands
 
