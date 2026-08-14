@@ -40,31 +40,32 @@
 
 ## B. 生命周期断线（根因：display 队列与 FSM/store 两套平行实现）
 
-### [ ] B1. ResolveRequest 丢弃 scope，从不调用 fsm.Resolve
+### [x] B1. ResolveRequest 丢弃 scope，从不调用 fsm.Resolve
 - 位置：`internal/team/permission_bridge.go:445-481`
 - "Allow for Task" 等同 "allow once"；`PermissionFSM.Resolve` 生产零调用。
 
-### [ ] B2. requestWithUI 从不调 store.CreateRequest
+### [x] B2. requestWithUI 从不调 store.CreateRequest
 - 位置：`internal/team/permission_bridge.go:364-391`
 - FSM/store 层操作空库：ListByRun/ListPendingByMember 永远为空，
   fsm.Cancel/fsm.Orphan 恒为 no-op。
 - 注意：B1 依赖 B2（Resolve 需要请求已入库）。
 
-### [ ] B3. permission_expired 生产不可达
+### [x] B3. permission_expired 生产不可达
 - 位置：所有退出路径先 Dequeue 停掉 TTL 定时器（`permission_bridge.go:438, 473, 551`）
 - 唯一调 fsm.Expire 的定时器被提前拆除。
 
-### [ ] B4. SetAuditFunc 不传播给 FSM
+### [x] B4. SetAuditFunc 不传播给 FSM
 - 位置：`internal/team/permission_bridge.go:257` vs `:263`
 - FSM 构造时拿到 no-op 值副本，5 种 FSM audit 事件被静默丢弃。
 
 ## C. 权限语义缺陷
 
-### [ ] C1. FindActiveGrant 忽略 TaskID 和 Scope
+### [x] C1. FindActiveGrant 忽略 TaskID 和 Scope
 - 位置：`internal/team/permission_bridge.go:95-105`
 - `scope:"call"` 的一次性授权实际变成 30 分钟 session 级放行；
   task 级 grant 跨 task 生效。B1/B2 接线后立即变成真实安全问题。
 - 关联：FindActiveGrant 返回内部 *Grant 指针（grant 现不可变故安全；B1 接线/E4 淘汰时须改返回副本）
+- 已修复：FindActiveGrant 按 taskID 匹配（task grant 限本 task，session grant 跨 task）
 
 ### [ ] C2. Hook 预批准与 allowedTools 白名单被 team 路径绕过
 - 位置：`internal/agent/hooked_tool.go:92`、`internal/team/permission_bridge.go:311-335`
@@ -122,3 +123,8 @@
 | 2026-08-14 | A2 | 0585ea56 | setter 字段以 queueMu 同步 |
 | 2026-08-14 | A3 | b6791aa7, d7b0a4f4 | fakes 同步 + delegate/queue 后续修复；全包 -race 绿 |
 | 2026-08-14 | 超出原范围 | 67bfcd6b | CreateRequest 防御性拷贝，修复 A1 暴露的竞态 |
+| 2026-08-15 | B1 | d370a037 | ResolveRequest 接线 fsm.Resolve；scope=call 不建 grant，scope=task 建 task grant；迟到决策走 late_response |
+| 2026-08-15 | B2 | 4d02fa7a | requestWithUI 落库 store.CreateRequest，teamReq 补全 Workspace/Team/Member/Task/Run/ResourceRef |
+| 2026-08-15 | B3 | d370a037 | handleTimeout 接线 fsm.Expire，permission_expired 生产可达 |
+| 2026-08-15 | B4 | 4d02fa7a | FSM 加 SetAuditFunc，bridge.SetAuditFunc 同步传播，FSM audit 落盘 |
+| 2026-08-15 | C1 | 415e3450 | FindActiveGrant 加 taskID 匹配：task grant 限本 task，session grant 跨 task；grant_auto 审计补字段 |

@@ -167,12 +167,12 @@ entry.ac 可用，修复 D2 的一半。）
 
 ## 验收条件
 
-- [ ] `requestWithUI` 落库，teamReq 字段完整（WorkspaceID/Team/Member/Task/Run/ResourceRef）
-- [ ] `ResolveRequest` 调 fsm.Resolve；scope=call 不建 grant；scope=task 建 task-scoped grant
-- [ ] store 非 pending 的 UI 决策 → late_response audit + member 收 deny
-- [ ] 60s 超时 → expired + permission_expired audit（生产可达）
-- [ ] ctx 取消 → canceled + permission_canceled audit
-- [ ] FSM audit 经 bridge.SetAuditFunc 传播落盘
-- [ ] FindActiveGrant 匹配 taskID；task grant 不跨 task 放行
-- [ ] 非 team 路径行为不变（既有测试守护）
-- [ ] `go build ./...`、`go test ./internal/team/`、`go test -race ./internal/team/` 全绿
+- [x] `requestWithUI` 落库，teamReq 字段完整（WorkspaceID/Team/Member/Task/Run/ResourceRef）
+- [x] `ResolveRequest` 调 fsm.Resolve；scope=call 不建 grant；scope=task 建 task-scoped grant
+- [x] store 非 pending 的 UI 决策 → late_response audit + member 收 deny
+- [x] 60s 超时 → expired + permission_expired audit（生产可达）
+- [x] ctx 取消 → canceled + permission_canceled audit
+- [x] FSM audit 经 bridge.SetAuditFunc 传播落盘
+- [x] FindActiveGrant 匹配 taskID；task grant 不跨 task 放行
+- [x] 非 team 路径行为不变（既有测试守护）
+- [x] `go build ./...`、`go test ./internal/team/`、`go test -race ./internal/team/` 全绿
