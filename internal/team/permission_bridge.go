@@ -160,11 +160,14 @@ func NewPermissionStore() *PermissionStore {
 	return &PermissionStore{requests: make(map[string]*PermissionRequest)}
 }
 
-// CreateRequest inserts a permission request into the store.
+// CreateRequest inserts a permission request into the store. It stores a
+// defensive copy of req, so later mutations of the caller's struct cannot
+// race with Update's write-back into the stored value.
 func (s *PermissionStore) CreateRequest(ctx context.Context, req *PermissionRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.requests[req.ID] = req
+	c := *req
+	s.requests[req.ID] = &c
 	return nil
 }
 

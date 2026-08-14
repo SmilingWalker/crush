@@ -88,6 +88,27 @@ func TestPermissionStore_CreateAndGet(t *testing.T) {
 	assert.Equal(t, "pending", got.Status)
 }
 
+// TestPermissionStore_CreateRequest_StoresCopy verifies CreateRequest stores a
+// defensive copy: mutating the caller's struct after the call must not be
+// visible through GetRequest. This is what keeps PermissionQueue.Enqueue's
+// req.ID read (after arming the expiry timer) from racing Store.Update's
+// write-back when the timer fires concurrently.
+func TestPermissionStore_CreateRequest_StoresCopy(t *testing.T) {
+	ps := NewPermissionStore()
+	ctx := context.Background()
+	req := &PermissionRequest{ID: "copy-1", Status: "pending", ToolName: "bash"}
+	require.NoError(t, ps.CreateRequest(ctx, req))
+
+	// Mutate the caller's struct after CreateRequest has returned.
+	req.Status = "allowed"
+	req.ToolName = "write"
+
+	got, err := ps.GetRequest(ctx, "copy-1")
+	require.NoError(t, err)
+	assert.Equal(t, "pending", got.Status, "store must hold a copy, not the caller's pointer")
+	assert.Equal(t, "bash", got.ToolName, "store must hold a copy, not the caller's pointer")
+}
+
 func TestPermissionStore_GetRequest_NotFound(t *testing.T) {
 	ps := NewPermissionStore()
 	ctx := context.Background()
