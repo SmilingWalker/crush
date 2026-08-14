@@ -174,7 +174,8 @@ func (s *PermissionStore) CreateRequest(ctx context.Context, req *PermissionRequ
 // Update applies fn to a copy of the stored request under the write lock and
 // writes it back only if fn succeeds. The status precondition check belongs
 // inside fn so the check and the write are atomic. Returns a copy of the
-// post-update state.
+// post-update state. fn runs while holding the store lock — it must not call
+// back into PermissionStore.
 func (s *PermissionStore) Update(
 	ctx context.Context, id string, fn func(*PermissionRequest) error,
 ) (*PermissionRequest, error) {
@@ -329,6 +330,12 @@ func (b *PermissionBridge) GrantStore() *GrantStore {
 // it shows a permission dialog; otherwise it uses the SkipRequests gate.
 func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePermissionRequest) (bool, error) {
 	ac, hasTeam := actor.FromContext(ctx)
+	if !hasTeam || ac.TeamID == "" || ac.MemberID == "" {
+		// Non-team session — delegate to inner (leader normal flow).
+		slog.Debug("perm_bridge: non-team delegate to inner", "tool_call_id", opts.ToolCallID)
+		return b.inner.Request(ctx, opts)
+	}
+
 	b.queueMu.Lock()
 	auditFn := b.auditFn
 	hasTracker := b.tracker != nil
@@ -338,11 +345,6 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 		"tool", opts.ToolName, "action", opts.Action, "tool_call_id", opts.ToolCallID,
 		"has_team", hasTeam, "tracker_set", hasTracker,
 	)
-	if !hasTeam || ac.TeamID == "" || ac.MemberID == "" {
-		// Non-team session — delegate to inner (leader normal flow).
-		slog.Debug("perm_bridge: non-team delegate to inner", "tool_call_id", opts.ToolCallID)
-		return b.inner.Request(ctx, opts)
-	}
 
 	// Check existing grants first (call scope).
 	if grant, ok := b.grantStore.FindActiveGrant(ctx, opts.SessionID, opts.ToolName, opts.Action); ok {
