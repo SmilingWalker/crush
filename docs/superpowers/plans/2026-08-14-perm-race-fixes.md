@@ -31,7 +31,7 @@
 - Consumes: 无新依赖。
 - Produces: `func (s *PermissionStore) Update(ctx context.Context, id string, fn func(*PermissionRequest) error) (*PermissionRequest, error)`；`GetRequest`/`ListByRun`/`ListPendingByMember` 返回副本（Task 2 依赖）。本任务**保留** `UpdateRequest`（FSM 仍在用，Task 2 删）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `permission_bridge_test.go` 末尾追加（若 import 缺 `errors`、`fmt`、`sync`、`time` 则补上）：
 
@@ -141,12 +141,12 @@ func TestPermissionStore_Update_Concurrent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `GOPROXY=https://goproxy.cn,direct go test ./internal/team/ -run 'TestPermissionStore_' -v`
 Expected: 编译失败，`ps.Update undefined (type *team.PermissionStore has no field or method Update)`。
 
-- [ ] **Step 3: 实现 Update 与副本读**
+- [x] **Step 3: 实现 Update 与副本读**
 
 在 `permission_bridge.go` 的 `GetRequest` 之前加：
 
@@ -190,14 +190,14 @@ func (s *PermissionStore) Update(
 
 （`UpdateRequest` 本任务不动。）
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `GOPROXY=https://goproxy.cn,direct go test ./internal/team/ -run 'TestPermissionStore_' -v`
 Expected: 全部 PASS。
 Run: `GOPROXY=https://goproxy.cn,direct go test ./internal/team/`
 Expected: PASS（FSM 走副本读改写回，功能不变）。
 
-- [ ] **Step 5: 格式化并提交**
+- [x] **Step 5: 格式化并提交**
 
 ```bash
 gofumpt -w internal/team/permission_bridge.go internal/team/permission_bridge_test.go
@@ -219,7 +219,7 @@ git commit -m "fix(team): make PermissionStore reads return copies and add atomi
 - Consumes: Task 1 的 `(*PermissionStore).Update`。
 - Produces: FSM 四个方法签名不变；新增包级哨兵 `errNotPending`；`UpdateRequest` 从此不存在（后续任何任务不得引用）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `permission_fsm_test.go` 末尾追加（import 缺 `sync` 则补）：
 
@@ -282,12 +282,12 @@ func TestPermissionFSM_Resolve_Concurrent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `GOPROXY=https://goproxy.cn,direct go test ./internal/team/ -run 'TestPermissionFSM_Resolve_Concurrent' -v`
 Expected: FAIL —— `events` 长度 > 1（当前读-改-写回允许多个 goroutine 都看到 pending，各自 audit）。
 
-- [ ] **Step 3: 迁移 FSM**
+- [x] **Step 3: 迁移 FSM**
 
 `permission_fsm.go` 顶部 import 加 `"errors"`，加包级哨兵：
 
@@ -476,14 +476,14 @@ func (fsm *PermissionFSM) Orphan(ctx context.Context, memberID string) (int, err
 
 最后：删除 `permission_bridge.go` 中的 `UpdateRequest` 方法（约 182-188 行）与 `permission_bridge_test.go` 中的 `TestPermissionStore_UpdateRequest`（约 97-111 行）。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `GOPROXY=https://goproxy.cn,direct go test ./internal/team/ -v -run 'TestFSM|TestPermissionFSM|TestPermissionStore'`
 Expected: 全部 PASS（`TestFSM_Resolve_AlreadyResolved` 等错误文案断言不受影响）。
 Run: `GOPROXY=https://goproxy.cn,direct go test -race ./internal/team/ -run 'TestFSM|TestPermissionFSM|TestPermission'`
 Expected: PASS。
 
-- [ ] **Step 5: 格式化并提交**
+- [x] **Step 5: 格式化并提交**
 
 ```bash
 gofumpt -w internal/team/permission_fsm.go internal/team/permission_bridge.go internal/team/permission_fsm_test.go internal/team/permission_bridge_test.go
@@ -503,7 +503,7 @@ git commit -m "refactor(team): route FSM state transitions through atomic Permis
 - Consumes: 无。
 - Produces: 签名均不变；新增约定——`auditFn`/`tracker`/`requestTimeout` 的读写必须持 `queueMu`（Task 4/5 不触碰这些字段）。
 
-- [ ] **Step 1: 写失败测试（以 -race 为裁判）**
+- [x] **Step 1: 写失败测试（以 -race 为裁判）**
 
 在 `permission_bridge_test.go` 末尾追加（import 缺 `sync`、`"github.com/google/uuid"` 则补）：
 
@@ -548,12 +548,12 @@ func TestPermissionBridge_ConcurrentSettersAndRequest(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 以 -race 跑测试确认失败**
+- [x] **Step 2: 以 -race 跑测试确认失败**
 
 Run: `GOPROXY=https://goproxy.cn,direct go test -race ./internal/team/ -run 'TestPermissionBridge_ConcurrentSettersAndRequest' -v`
 Expected: FAIL —— `WARNING: DATA RACE`，`SetRequestTimeout` 写 vs `requestWithUI`（约 :373）或 `pumpDisplay` 读 `b.requestTimeout`；`SetAuditFunc` 写 vs `requestWithUI`（约 :384）读 `b.auditFn`。
 
-- [ ] **Step 3: 实现同步**
+- [x] **Step 3: 实现同步**
 
 三个 setter 改为：
 
@@ -610,12 +610,12 @@ debug 日志的 `"tracker_set", b.tracker != nil` 改为 `"tracker_set", hasTrac
 
 `ResolveRequest` 的 `!ok` 分支：在 `b.queueMu.Lock()` 之后、`Unlock` 之前快照 `auditFn := b.auditFn`，解锁后的 `b.auditFn(...)` 改用 `auditFn`。
 
-- [ ] **Step 4: 以 -race 跑测试确认通过**
+- [x] **Step 4: 以 -race 跑测试确认通过**
 
 Run: `GOPROXY=https://goproxy.cn,direct go test -race ./internal/team/ -run 'TestPermissionBridge' -v`
 Expected: 全部 PASS（含新测试，无 DATA RACE）。
 
-- [ ] **Step 5: 格式化并提交**
+- [x] **Step 5: 格式化并提交**
 
 ```bash
 gofumpt -w internal/team/permission_bridge.go internal/team/permission_bridge_test.go
@@ -636,12 +636,12 @@ git commit -m "fix(team): synchronize PermissionBridge setter fields with queueM
 - Consumes: 无。
 - Produces: 两个 fake 的 `RunCallsCount() int` 与 `RunCalls() []agent.TeamAgentCall` 快照访问器；直接读 `.runCalls` 从此禁止。
 
-- [ ] **Step 1: 以 -race 复现失败（测试已存在）**
+- [x] **Step 1: 以 -race 复现失败（测试已存在）**
 
 Run: `GOPROXY=https://goproxy.cn,direct go test -race ./internal/team/ -run 'TestMemberRunner_Start_IdleLoop|TestMemberRunner_handleWake' -v`
 Expected: FAIL —— `WARNING: DATA RACE`，`recordingTurnRunner.Run` 写 `runCalls`（:173）vs 测试读（:221/:297）。
 
-- [ ] **Step 2: 修 recordingTurnRunner 并更新读点**
+- [x] **Step 2: 修 recordingTurnRunner 并更新读点**
 
 `member_runner_test.go` 的 fake 改为：
 
@@ -696,21 +696,21 @@ func (m *recordingTurnRunner) RunCalls() []agent.TeamAgentCall {
 
 - `:268`：`assert.Equal(t, 0, len(mockRunner.runCalls), "no runs while busy")` → `assert.Equal(t, 0, mockRunner.RunCallsCount(), "no runs while busy")`
 
-- [ ] **Step 3: 修 e2eRecordingRunner 并更新读点**
+- [x] **Step 3: 修 e2eRecordingRunner 并更新读点**
 
 `e2e_test.go` 的 fake 加同样的 `mu sync.Mutex`、`Run` 内加锁，追加同样的 `RunCallsCount`/`RunCalls` 访问器（方法接收者类型为 `*e2eRecordingRunner`，注释同上）。`:179` 的 `calls := len(mockRunner.runCalls)` → `calls := mockRunner.RunCallsCount()`。
 
-- [ ] **Step 4: 修 shutdown_test 读点**
+- [x] **Step 4: 修 shutdown_test 读点**
 
 `:191` `callsBefore := len(mockRunner.runCalls)` → `callsBefore := mockRunner.RunCallsCount()`；
 `:206` `callsAfter := len(mockRunner.runCalls)` → `callsAfter := mockRunner.RunCallsCount()`。
 
-- [ ] **Step 5: 以 -race 跑全包确认转绿**
+- [x] **Step 5: 以 -race 跑全包确认转绿**
 
 Run: `GOPROXY=https://goproxy.cn,direct go test -race ./internal/team/`
 Expected: PASS —— **这是本计划的验收基线**。
 
-- [ ] **Step 6: 格式化并提交**
+- [x] **Step 6: 格式化并提交**
 
 ```bash
 gofumpt -w internal/team/member_runner_test.go internal/team/e2e_test.go internal/team/shutdown_test.go
@@ -729,7 +729,7 @@ git commit -m "test(team): synchronize recording fake runCalls access across gor
 - Consumes: Task 1-4 的全部产出。
 - Produces: backlog 中 A1/A2/A3 勾选与完成记录。
 
-- [ ] **Step 1: 全量验证**
+- [x] **Step 1: 全量验证**
 
 ```bash
 GOPROXY=https://goproxy.cn,direct go build ./...
@@ -739,11 +739,11 @@ GOPROXY=https://goproxy.cn,direct go test -race ./internal/team/
 
 Expected: 三条全部通过。
 
-- [ ] **Step 2: 更新 backlog**
+- [x] **Step 2: 更新 backlog**
 
 `2026-08-14-code-scan-backlog.md`：A1/A2/A3 标题的 `[ ]` 改为 `[x]`；"完成记录"表追加三行（日期 2026-08-14，问题 A1/A2/A3，Commit 填 Task 1-4 的实际 commit hash）。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add docs/superpowers/plans/2026-08-14-code-scan-backlog.md

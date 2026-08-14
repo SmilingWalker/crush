@@ -112,10 +112,10 @@ func (s *PermissionStore) Update(
 
 ## 验收条件
 
-- [ ] `PermissionStore` 读方法返回副本，`UpdateRequest` 已删除
-- [ ] FSM 四个迁移方法全部经 `Update` 原子写入，pending 检查在锁内
-- [ ] bridge 三个 setter 字段读写均持 `queueMu`
-- [ ] 两个 fake 的 `runCalls` 访问同步，直接字段读取全部消除
-- [ ] `go build ./...` 通过
-- [ ] `go test ./internal/team/` 通过
-- [ ] `go test -race ./internal/team/` 通过（绿色基线建立）
+- [x] `PermissionStore` 读方法返回副本，`UpdateRequest` 已删除
+- [x] FSM 四个迁移方法全部经 `Update` 原子写入，pending 检查在锁内
+- [x] bridge 三个 setter 字段读写均持 `queueMu`
+- [x] 两个 fake 的 `runCalls` 访问同步，直接字段读取全部消除
+- [x] `go build ./...` 通过
+- [x] `go test ./internal/team/` 通过
+- [x] `go test -race ./internal/team/` 通过（绿色基线建立）

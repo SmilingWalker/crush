@@ -64,6 +64,7 @@
 - 位置：`internal/team/permission_bridge.go:95-105`
 - `scope:"call"` 的一次性授权实际变成 30 分钟 session 级放行；
   task 级 grant 跨 task 生效。B1/B2 接线后立即变成真实安全问题。
+- 关联：FindActiveGrant 返回内部 *Grant 指针（grant 现不可变故安全；B1 接线/E4 淘汰时须改返回副本）
 
 ### [ ] C2. Hook 预批准与 allowedTools 白名单被 team 路径绕过
 - 位置：`internal/agent/hooked_tool.go:92`、`internal/team/permission_bridge.go:311-335`
