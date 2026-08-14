@@ -202,14 +202,6 @@ func (s *PermissionStore) GetRequest(ctx context.Context, id string) (*Permissio
 	return &out, nil
 }
 
-// UpdateRequest updates an existing permission request.
-func (s *PermissionStore) UpdateRequest(ctx context.Context, req *PermissionRequest) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.requests[req.ID] = req
-	return nil
-}
-
 // ListByRun returns all pending requests for a given run ID.
 func (s *PermissionStore) ListByRun(ctx context.Context, runID string) []*PermissionRequest {
 	s.mu.RLock()

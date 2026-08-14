@@ -96,22 +96,6 @@ func TestPermissionStore_GetRequest_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestPermissionStore_UpdateRequest(t *testing.T) {
-	ps := NewPermissionStore()
-	ctx := context.Background()
-	req := &PermissionRequest{ID: "r2", Status: "pending"}
-	err := ps.CreateRequest(ctx, req)
-	assert.NoError(t, err)
-
-	req.Status = "allowed"
-	err = ps.UpdateRequest(ctx, req)
-	assert.NoError(t, err)
-
-	got, err := ps.GetRequest(ctx, "r2")
-	assert.NoError(t, err)
-	assert.Equal(t, "allowed", got.Status)
-}
-
 func TestPermissionBridge_NewPermissionBridge(t *testing.T) {
 	// PermissionBridge with nil inner (valid construction, just testing defaults).
 	// The inner service is not called until Request is invoked.

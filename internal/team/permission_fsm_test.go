@@ -2,6 +2,7 @@ package team
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,4 +88,61 @@ func TestFSM_Expire(t *testing.T) {
 
 	got, _ := ps.GetRequest(ctx, "r4")
 	assert.Equal(t, "expired", got.Status)
+}
+
+func TestPermissionFSM_Resolve_Concurrent(t *testing.T) {
+	ps := NewPermissionStore()
+	gs := NewGrantStore()
+
+	var mu sync.Mutex
+	var events []PermAuditEvent
+	auditFn := func(ctx context.Context, e PermAuditEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, e)
+	}
+	fsm := NewPermissionFSM(ps, gs, auditFn)
+
+	ctx := context.Background()
+	require.NoError(t, ps.CreateRequest(ctx, &PermissionRequest{
+		ID: "cc1", TeamID: "t1", MemberID: "m1", SessionID: "s1", RunID: "run1",
+		ToolName: "bash", Action: "execute", Status: "pending", CreatedAt: time.Now(),
+	}))
+
+	const n = 16
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			decision := "allowed"
+			if i%2 == 1 {
+				decision = "denied"
+			}
+			_ = fsm.Resolve(ctx, ResolveRequest{
+				RequestID: "cc1", Decision: decision, Scope: "call", DecidedBy: "user",
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Len(t, events, 1, "exactly one decision must win and be audited")
+
+	got, err := ps.GetRequest(ctx, "cc1")
+	require.NoError(t, err)
+	assert.Contains(t, []string{"allowed", "denied"}, got.Status)
+
+	gs.mu.RLock()
+	grantCount := len(gs.grants)
+	gs.mu.RUnlock()
+	if got.Status == "allowed" {
+		assert.Equal(t, 1, grantCount)
+	} else {
+		assert.Equal(t, 0, grantCount)
+	}
 }
