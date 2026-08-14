@@ -489,6 +489,10 @@ func (b *PermissionBridge) terminateEntry(reqID string) {
 		b.pumpDisplay()
 	}
 	b.queue.Dequeue(reqID)
+
+	if err := b.fsm.CancelRequest(context.Background(), reqID); err != nil {
+		slog.Debug("perm_bridge: cancel failed", "tool_call_id", reqID, "error", err)
+	}
 }
 
 // ResolveRequest is called by the UI when the user decides a pending request.
@@ -498,8 +502,8 @@ func (b *PermissionBridge) terminateEntry(reqID string) {
 func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope string) error {
 	b.queueMu.Lock()
 	entry, ok := b.entries[reqID]
+	auditFn := b.auditFn
 	if !ok {
-		auditFn := b.auditFn
 		b.queueMu.Unlock()
 		slog.Debug("perm_bridge: ResolveRequest not pending (late or unknown)", "tool_call_id", reqID)
 		// M5-08b: audit the late response. We cannot distinguish "never existed"
@@ -529,6 +533,26 @@ func (b *PermissionBridge) ResolveRequest(reqID string, allowed bool, scope stri
 	slog.Debug("perm_bridge: ResolveRequest",
 		"tool_call_id", reqID, "allowed", allowed, "scope", scope, "was_displayed", wasDisplayed,
 	)
+
+	decision := "denied"
+	if allowed {
+		decision = "allowed"
+	}
+	if err := b.fsm.Resolve(context.Background(), ResolveRequest{
+		RequestID: reqID, Decision: decision, Scope: scope, DecidedBy: "user",
+	}); err != nil {
+		// The store row already left pending (TTL expiry or cancel raced us):
+		// a late decision — audit it and deny the member. No grant is created.
+		slog.Debug("perm_bridge: resolve raced by terminal state, denying", "tool_call_id", reqID, "error", err)
+		auditFn(context.Background(), PermAuditEvent{
+			WorkspaceID: b.workspaceID, SessionID: entry.opts.SessionID, ToolCallID: reqID,
+			Action: PermAuditLateResponse, TeamID: entry.ac.TeamID, MemberID: entry.ac.MemberID,
+			TaskID: entry.ac.TaskID, RunID: entry.ac.RunID, ToolName: entry.opts.ToolName,
+			Decision: decision, Timestamp: time.Now(),
+		})
+		entry.ch <- false
+		return nil
+	}
 
 	entry.ch <- allowed // buffered, size 1 — never blocks
 	return nil
@@ -603,6 +627,11 @@ func (b *PermissionBridge) handleTimeout(reqID string) {
 		b.pumpDisplay()
 	}
 	b.queue.Dequeue(reqID)
+
+	if err := b.fsm.Expire(context.Background(), reqID); err != nil {
+		slog.Debug("perm_bridge: expire failed", "tool_call_id", reqID, "error", err)
+	}
+
 	close(entry.timeoutCh)
 }
 
