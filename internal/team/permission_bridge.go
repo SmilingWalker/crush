@@ -24,7 +24,7 @@ import (
 type PermAuditAction string
 
 const (
-	PermAuditGrantAuto          PermAuditAction = "grant_auto"
+	PermAuditGrantAuto           PermAuditAction = "grant_auto"
 	PermAuditPermissionRequested PermAuditAction = "permission_requested"
 	PermAuditPermissionAllowed   PermAuditAction = "permission_allowed"
 	PermAuditPermissionDenied    PermAuditAction = "permission_denied"
@@ -142,11 +142,11 @@ type PermissionRequest struct {
 // displayed entry has been Published to the UI and has a live timer.
 type pendingEntry struct {
 	reqID     string
-	ch        chan bool                  // decision from UI (buffered, size 1)
+	ch        chan bool // decision from UI (buffered, size 1)
 	tctx      *TeamPermissionContext
 	opts      permission.CreatePermissionRequest
 	ac        actor.ActorContext
-	timeoutCh chan struct{}              // closed when the 60s display-timer fires
+	timeoutCh chan struct{} // closed when the 60s display-timer fires
 }
 
 // PermissionStore manages in-memory permission requests.
@@ -168,6 +168,28 @@ func (s *PermissionStore) CreateRequest(ctx context.Context, req *PermissionRequ
 	return nil
 }
 
+// Update applies fn to a copy of the stored request under the write lock and
+// writes it back only if fn succeeds. The status precondition check belongs
+// inside fn so the check and the write are atomic. Returns a copy of the
+// post-update state.
+func (s *PermissionStore) Update(
+	ctx context.Context, id string, fn func(*PermissionRequest) error,
+) (*PermissionRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	req, ok := s.requests[id]
+	if !ok {
+		return nil, fmt.Errorf("permission request not found: %s", id)
+	}
+	candidate := *req
+	if err := fn(&candidate); err != nil {
+		return nil, err
+	}
+	*req = candidate
+	out := *req
+	return &out, nil
+}
+
 // GetRequest retrieves a permission request by ID.
 func (s *PermissionStore) GetRequest(ctx context.Context, id string) (*PermissionRequest, error) {
 	s.mu.RLock()
@@ -176,7 +198,8 @@ func (s *PermissionStore) GetRequest(ctx context.Context, id string) (*Permissio
 	if !ok {
 		return nil, fmt.Errorf("permission request not found: %s", id)
 	}
-	return req, nil
+	out := *req
+	return &out, nil
 }
 
 // UpdateRequest updates an existing permission request.
@@ -194,7 +217,8 @@ func (s *PermissionStore) ListByRun(ctx context.Context, runID string) []*Permis
 	var result []*PermissionRequest
 	for _, req := range s.requests {
 		if req.RunID == runID && req.Status == "pending" {
-			result = append(result, req)
+			c := *req
+			result = append(result, &c)
 		}
 	}
 	return result
@@ -207,7 +231,8 @@ func (s *PermissionStore) ListPendingByMember(ctx context.Context, memberID stri
 	var result []*PermissionRequest
 	for _, req := range s.requests {
 		if req.MemberID == memberID && req.Status == "pending" {
-			result = append(result, req)
+			c := *req
+			result = append(result, &c)
 		}
 	}
 	return result
@@ -224,7 +249,7 @@ type PermissionBridge struct {
 	queue       *PermissionQueue
 	auditFn     PermAuditFunc
 	// pendingRequests tracks requests awaiting UI decision
-	pendingRequests map[string]chan bool // requestID → decision channel
+	pendingRequests map[string]chan bool  // requestID → decision channel
 	tracker         *ActiveSessionTracker // M5.2: shared singleton, injected via SetActiveSessionTracker
 	// teamContexts holds team display context per pending request, queried by
 	// the TUI to decide whether to render a team permission dialog.
@@ -236,9 +261,9 @@ type PermissionBridge struct {
 	// queueMu guards pendingRequests, teamContexts, entries, displayFIFO, and
 	// displayed (the entire pending-request state machine).
 	queueMu     sync.Mutex
-	displayFIFO []*pendingEntry             // waiting, not yet shown
-	displayed   *pendingEntry               // the one currently shown (≤1 invariant)
-	entries     map[string]*pendingEntry    // reqID → entry, O(1) resolve/cancel/timeout
+	displayFIFO []*pendingEntry          // waiting, not yet shown
+	displayed   *pendingEntry            // the one currently shown (≤1 invariant)
+	entries     map[string]*pendingEntry // reqID → entry, O(1) resolve/cancel/timeout
 }
 
 // NewPermissionBridge creates a PermissionBridge wrapping the given permission.Service.

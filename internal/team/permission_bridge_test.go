@@ -2,6 +2,8 @@ package team
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -849,7 +851,7 @@ func TestPermEventToAuditEvent_EmptyFieldsBecomeNil(t *testing.T) {
 	require.Nil(t, got.ToolCallID)
 	require.Nil(t, got.TaskID)
 	require.Nil(t, got.RunID)
-	require.Nil(t, got.Summary)    // DecidedBy empty → Summary nil
+	require.Nil(t, got.Summary)     // DecidedBy empty → Summary nil
 	require.Nil(t, got.ResourceRef) // ToolName empty → ResourceRef nil
 }
 
@@ -944,4 +946,108 @@ func TestPermissionBridge_LateResponseAudit(t *testing.T) {
 	require.Equal(t, "nonexistent-req", captured[0].ToolCallID)
 	require.Equal(t, "default", captured[0].WorkspaceID)
 	mu.Unlock()
+}
+
+func TestPermissionStore_Update_AppliesMutation(t *testing.T) {
+	ps := NewPermissionStore()
+	ctx := context.Background()
+	require.NoError(t, ps.CreateRequest(ctx, &PermissionRequest{ID: "u1", Status: "pending"}))
+
+	got, err := ps.Update(ctx, "u1", func(r *PermissionRequest) error {
+		if r.Status != "pending" {
+			return fmt.Errorf("not pending: %s", r.Status)
+		}
+		r.Status = "allowed"
+		r.Decision = "allowed"
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "allowed", got.Status)
+
+	stored, _ := ps.GetRequest(ctx, "u1")
+	assert.Equal(t, "allowed", stored.Status)
+}
+
+func TestPermissionStore_Update_FnErrorAborts(t *testing.T) {
+	ps := NewPermissionStore()
+	ctx := context.Background()
+	require.NoError(t, ps.CreateRequest(ctx, &PermissionRequest{ID: "u2", Status: "pending"}))
+
+	_, err := ps.Update(ctx, "u2", func(r *PermissionRequest) error {
+		r.Status = "allowed" // partial mutation before the error.
+		return errors.New("boom")
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
+
+	stored, _ := ps.GetRequest(ctx, "u2")
+	assert.Equal(t, "pending", stored.Status, "aborted update must not persist partial mutation")
+}
+
+func TestPermissionStore_Update_NotFound(t *testing.T) {
+	ps := NewPermissionStore()
+	_, err := ps.Update(context.Background(), "nope", func(r *PermissionRequest) error { return nil })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestPermissionStore_ReadsReturnCopies(t *testing.T) {
+	ps := NewPermissionStore()
+	ctx := context.Background()
+	require.NoError(t, ps.CreateRequest(ctx, &PermissionRequest{
+		ID: "c1", Status: "pending", RunID: "run-c", MemberID: "m-c",
+	}))
+
+	got, _ := ps.GetRequest(ctx, "c1")
+	got.Status = "allowed"
+	stored, _ := ps.GetRequest(ctx, "c1")
+	assert.Equal(t, "pending", stored.Status, "mutating a returned copy must not touch the store")
+
+	byRun := ps.ListByRun(ctx, "run-c")
+	require.Len(t, byRun, 1)
+	byRun[0].Status = "denied"
+	stored, _ = ps.GetRequest(ctx, "c1")
+	assert.Equal(t, "pending", stored.Status)
+
+	byMember := ps.ListPendingByMember(ctx, "m-c")
+	require.Len(t, byMember, 1)
+	byMember[0].Status = "orphaned"
+	stored, _ = ps.GetRequest(ctx, "c1")
+	assert.Equal(t, "pending", stored.Status)
+}
+
+func TestPermissionStore_Update_Concurrent(t *testing.T) {
+	ps := NewPermissionStore()
+	ctx := context.Background()
+	require.NoError(t, ps.CreateRequest(ctx, &PermissionRequest{ID: "cc1", Status: "pending"}))
+
+	const n = 16
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	successes := make(chan int, n)
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := ps.Update(ctx, "cc1", func(r *PermissionRequest) error {
+				if r.Status != "pending" {
+					return errors.New("not pending")
+				}
+				r.Status = "allowed"
+				return nil
+			})
+			if err == nil {
+				successes <- 1
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(successes)
+	count := 0
+	for range successes {
+		count++
+	}
+	assert.Equal(t, 1, count, "exactly one concurrent transition must win")
 }
