@@ -91,13 +91,23 @@ func NewGrantStore() *GrantStore {
 }
 
 // FindActiveGrant returns an active (non-expired) grant matching the session,
-// tool name, and action. Returns nil, false if no active grant is found.
-func (g *GrantStore) FindActiveGrant(ctx context.Context, sessionID string, toolName string, action string) (*Grant, bool) {
+// tool name, action, and task scope: a task-scoped grant only matches the
+// task it was created for; a session-scoped grant matches any task in the
+// session.
+func (g *GrantStore) FindActiveGrant(ctx context.Context, sessionID string, taskID string, toolName string, action string) (*Grant, bool) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	for _, grant := range g.grants {
-		if grant.SessionID == sessionID && grant.ToolName == toolName &&
-			grant.Action == action && time.Now().Before(grant.ExpiresAt) {
+		if grant.SessionID != sessionID || grant.ToolName != toolName || grant.Action != action {
+			continue
+		}
+		if !time.Now().Before(grant.ExpiresAt) {
+			continue
+		}
+		if grant.Scope == "session" {
+			return grant, true
+		}
+		if grant.Scope == "task" && grant.TaskID == taskID {
 			return grant, true
 		}
 	}
@@ -350,13 +360,14 @@ func (b *PermissionBridge) Request(ctx context.Context, opts permission.CreatePe
 		"has_team", hasTeam, "tracker_set", hasTracker,
 	)
 
-	// Check existing grants first (call scope).
-	if grant, ok := b.grantStore.FindActiveGrant(ctx, opts.SessionID, opts.ToolName, opts.Action); ok {
+	// Check existing grants first (task/session scope aware).
+	if grant, ok := b.grantStore.FindActiveGrant(ctx, opts.SessionID, ac.TaskID, opts.ToolName, opts.Action); ok {
 		slog.Debug("perm_bridge: active grant found (auto-allow)", "tool_call_id", opts.ToolCallID, "scope", grant.Scope)
 		auditFn(ctx, PermAuditEvent{
 			WorkspaceID: b.workspaceID, SessionID: opts.SessionID, ToolCallID: opts.ToolCallID,
 			Action: PermAuditGrantAuto, TeamID: ac.TeamID, MemberID: ac.MemberID,
-			ToolName: opts.ToolName, Decision: "allowed", Scope: grant.Scope, Timestamp: time.Now(),
+			TaskID: ac.TaskID, RunID: ac.RunID, ToolName: opts.ToolName,
+			Decision: "allowed", Scope: grant.Scope, Timestamp: time.Now(),
 		})
 		return true, nil
 	}

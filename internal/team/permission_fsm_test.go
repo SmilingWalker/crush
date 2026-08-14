@@ -39,7 +39,7 @@ func TestFSM_Resolve_Allowed_CallScope(t *testing.T) {
 	assert.Equal(t, "allowed", got.Status)
 	assert.Equal(t, "call", got.DecisionScope)
 
-	_, ok := gs.FindActiveGrant(ctx, "s1", "bash", "execute")
+	_, ok := gs.FindActiveGrant(ctx, "s1", "", "bash", "execute")
 	assert.False(t, ok, "allow-once must not create a grant")
 }
 

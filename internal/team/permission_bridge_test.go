@@ -41,11 +41,11 @@ func TestGrantStore_FindActiveGrant(t *testing.T) {
 	ctx := context.Background()
 	err := gs.CreateGrant(ctx, &Grant{
 		ID: "g1", MemberID: "m1", SessionID: "s1", ToolName: "bash", Action: "execute",
-		Scope: "call", ExpiresAt: time.Now().Add(1 * time.Hour),
+		Scope: "session", ExpiresAt: time.Now().Add(1 * time.Hour),
 	})
 	assert.NoError(t, err)
 
-	grant, ok := gs.FindActiveGrant(ctx, "s1", "bash", "execute")
+	grant, ok := gs.FindActiveGrant(ctx, "s1", "task-1", "bash", "execute")
 	assert.True(t, ok)
 	assert.Equal(t, "g1", grant.ID)
 }
@@ -55,11 +55,11 @@ func TestGrantStore_FindActiveGrant_Expired(t *testing.T) {
 	ctx := context.Background()
 	err := gs.CreateGrant(ctx, &Grant{
 		ID: "g2", MemberID: "m2", SessionID: "s2", ToolName: "write", Action: "create",
-		Scope: "call", ExpiresAt: time.Now().Add(-1 * time.Hour),
+		Scope: "session", ExpiresAt: time.Now().Add(-1 * time.Hour),
 	})
 	assert.NoError(t, err)
 
-	_, ok := gs.FindActiveGrant(ctx, "s2", "write", "create")
+	_, ok := gs.FindActiveGrant(ctx, "s2", "task-1", "write", "create")
 	assert.False(t, ok)
 }
 
@@ -68,12 +68,41 @@ func TestGrantStore_FindActiveGrant_NoMatch(t *testing.T) {
 	ctx := context.Background()
 	err := gs.CreateGrant(ctx, &Grant{
 		ID: "g3", MemberID: "m3", SessionID: "s3", ToolName: "bash", Action: "execute",
-		Scope: "call", ExpiresAt: time.Now().Add(1 * time.Hour),
+		Scope: "session", ExpiresAt: time.Now().Add(1 * time.Hour),
 	})
 	assert.NoError(t, err)
 
-	_, ok := gs.FindActiveGrant(ctx, "other-session", "bash", "execute")
+	_, ok := gs.FindActiveGrant(ctx, "other-session", "task-1", "bash", "execute")
 	assert.False(t, ok)
+}
+
+func TestGrantStore_FindActiveGrant_TaskScope(t *testing.T) {
+	gs := NewGrantStore()
+	ctx := context.Background()
+	now := time.Now()
+	require.NoError(t, gs.CreateGrant(ctx, &Grant{
+		ID: "g-task", SessionID: "s1", TaskID: "task-1", ToolName: "bash", Action: "execute",
+		Scope: "task", ExpiresAt: now.Add(time.Hour), CreatedAt: now,
+	}))
+
+	_, ok := gs.FindActiveGrant(ctx, "s1", "task-1", "bash", "execute")
+	assert.True(t, ok, "task grant must match its own task")
+
+	_, ok = gs.FindActiveGrant(ctx, "s1", "task-2", "bash", "execute")
+	assert.False(t, ok, "task grant must not match another task")
+}
+
+func TestGrantStore_FindActiveGrant_SessionScopeCrossTask(t *testing.T) {
+	gs := NewGrantStore()
+	ctx := context.Background()
+	now := time.Now()
+	require.NoError(t, gs.CreateGrant(ctx, &Grant{
+		ID: "g-sess", SessionID: "s1", TaskID: "task-1", ToolName: "bash", Action: "execute",
+		Scope: "session", ExpiresAt: now.Add(time.Hour), CreatedAt: now,
+	}))
+
+	_, ok := gs.FindActiveGrant(ctx, "s1", "task-2", "bash", "execute")
+	assert.True(t, ok, "session grant must match any task in the session")
 }
 
 func TestPermissionStore_CreateAndGet(t *testing.T) {

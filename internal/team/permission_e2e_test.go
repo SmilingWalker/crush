@@ -26,7 +26,7 @@ func TestM5_PermissionFlow_RequestResolve(t *testing.T) {
 	// Create a pending request.
 	req := &PermissionRequest{
 		ID: "e2e-r1", WorkspaceID: "default", TeamID: "t1", MemberID: "m1",
-		SessionID: "s1", ToolCallID: "call-r1", RunID: "run1",
+		SessionID: "s1", ToolCallID: "call-r1", RunID: "run1", TaskID: "task-1",
 		ToolName: "bash", Action: "execute", ResourceRef: "go test",
 		Status: "pending", RequestedScope: "call",
 		CreatedAt: time.Now(),
@@ -44,8 +44,8 @@ func TestM5_PermissionFlow_RequestResolve(t *testing.T) {
 	assert.Equal(t, "allowed", got.Status)
 	assert.Equal(t, "task", got.DecisionScope)
 
-	// Verify grant created (FindActiveGrant now matches on SessionID).
-	grant, ok := gs.FindActiveGrant(ctx, "s1", "bash", "execute")
+	// Verify grant created (task grant matches the request's own task).
+	grant, ok := gs.FindActiveGrant(ctx, "s1", "task-1", "bash", "execute")
 	assert.True(t, ok)
 	assert.Equal(t, "task", grant.Scope)
 
@@ -85,7 +85,7 @@ func TestM5_PermissionFlow_Deny(t *testing.T) {
 	assert.Equal(t, "denied", got.Status)
 
 	// No grant created for deny (match on SessionID).
-	_, ok := gs.FindActiveGrant(ctx, "s2", "write", "write")
+	_, ok := gs.FindActiveGrant(ctx, "s2", "", "write", "write")
 	assert.False(t, ok)
 
 	require.Equal(t, 1, len(auditEvents))
@@ -134,7 +134,7 @@ func TestM5_FullFlow_RequestQueueResolve(t *testing.T) {
 
 	req := &PermissionRequest{
 		ID: "e2e-full", WorkspaceID: "default", TeamID: "t1", MemberID: "m2",
-		SessionID: "s3", ToolCallID: "call-full", RunID: "run2",
+		SessionID: "s3", ToolCallID: "call-full", RunID: "run2", TaskID: "task-2",
 		ToolName: "edit", Action: "write", ResourceRef: "main.go",
 		Status: "pending", RequestedScope: "call",
 		CreatedAt: time.Now(),
@@ -153,8 +153,8 @@ func TestM5_FullFlow_RequestQueueResolve(t *testing.T) {
 	q.Dequeue("e2e-full")
 	assert.Equal(t, 0, q.PendingCount())
 
-	// Grant exists with session scope (match on SessionID).
-	grant, ok := gs.FindActiveGrant(ctx, "s3", "edit", "write")
+	// Grant exists with session scope (matches any task in the session).
+	grant, ok := gs.FindActiveGrant(ctx, "s3", "task-2", "edit", "write")
 	assert.True(t, ok)
 	assert.Equal(t, "session", grant.Scope)
 
