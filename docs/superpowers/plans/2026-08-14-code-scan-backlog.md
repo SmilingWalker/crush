@@ -128,3 +128,18 @@
 | 2026-08-15 | B3 | d370a037 | handleTimeout 接线 fsm.Expire，permission_expired 生产可达 |
 | 2026-08-15 | B4 | 4d02fa7a | FSM 加 SetAuditFunc，bridge.SetAuditFunc 同步传播，FSM audit 落盘 |
 | 2026-08-15 | C1 | 415e3450 | FindActiveGrant 加 taskID 匹配：task grant 限本 task，session grant 跨 task；grant_auto 审计补字段 |
+
+## 最终审查延后项（2026-08-15，B1+B2 计划收尾时登记）
+
+### [ ] D3. 无 task 上下图的 task-scope resolve 防护
+- 生产 actor 均有 TaskID（delegate_runner 注入），但 FSM 未拒绝 TaskID 为空的 task-scope
+  resolve——退化匹配见 C1 修复后的 FindActiveGrant。建议：Resolve 对空 TaskID + task scope
+  报错或降级为 call。
+
+### [ ] E6. run 级 Cancel 的 audit 缺 TaskID（与 CancelRequest 不一致）
+- 位置：`internal/team/permission_fsm.go` Cancel 方法。
+
+### [ ] F5. 注释/日志债
+- `internal/app/app_team_test.go:52-53`、`permission_e2e_test.go:87` 注释过时（grant 匹配已
+  含 task scope）；`scripts/check_log_capitalization.sh` 仓级 45 处小写命中（37 处在
+  internal/team）——需一次仓级清理，非本分支引入。
