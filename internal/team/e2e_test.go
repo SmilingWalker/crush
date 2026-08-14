@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,8 +57,12 @@ func newE2EFixture(t *testing.T) (Service, *sql.DB) {
 // because it depends on the broken newServiceFixture).
 // =============================================================================
 
-// e2eRecordingRunner records Run calls for test assertions.
+// e2eRecordingRunner records Run calls for test assertions. runCalls is
+// written on the runner goroutine and read on the test goroutine, so all
+// access goes through mu. runResult/runErr/busy are only set at construction
+// (before Start), which is ordered by goroutine creation.
 type e2eRecordingRunner struct {
+	mu        sync.Mutex
 	runCalls  []agent.TeamAgentCall
 	runResult agent.TurnRunResult
 	runErr    error
@@ -65,8 +70,26 @@ type e2eRecordingRunner struct {
 }
 
 func (m *e2eRecordingRunner) Run(ctx context.Context, call agent.TeamAgentCall) (agent.TurnRunResult, error) {
+	m.mu.Lock()
 	m.runCalls = append(m.runCalls, call)
+	m.mu.Unlock()
 	return m.runResult, m.runErr
+}
+
+// RunCallsCount returns the number of recorded Run calls.
+func (m *e2eRecordingRunner) RunCallsCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.runCalls)
+}
+
+// RunCalls returns a snapshot of the recorded Run calls.
+func (m *e2eRecordingRunner) RunCalls() []agent.TeamAgentCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]agent.TeamAgentCall, len(m.runCalls))
+	copy(out, m.runCalls)
+	return out
 }
 
 func (m *e2eRecordingRunner) Cancel(sessionID string) {}
@@ -176,7 +199,7 @@ func TestE2E_SpawnMember(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	mr.mu.Lock()
-	calls := len(mockRunner.runCalls)
+	calls := mockRunner.RunCallsCount()
 	state := mr.State
 	mr.mu.Unlock()
 	assert.Equal(t, 1, calls, "TurnRunner should have run exactly once")

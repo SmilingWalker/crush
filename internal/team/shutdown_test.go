@@ -188,7 +188,7 @@ func TestShutdown_StopWakeups(t *testing.T) {
 
 	// Count wake calls before shutdown.
 	mr.mu.Lock()
-	callsBefore := len(mockRunner.runCalls)
+	callsBefore := mockRunner.RunCallsCount()
 	mr.mu.Unlock()
 
 	// Shutdown in Force mode (fast path).
@@ -203,7 +203,7 @@ func TestShutdown_StopWakeups(t *testing.T) {
 
 	// No new runs should have started.
 	mr.mu.Lock()
-	callsAfter := len(mockRunner.runCalls)
+	callsAfter := mockRunner.RunCallsCount()
 	mr.mu.Unlock()
 	assert.Equal(t, callsBefore, callsAfter, "wakes after shutdown should not trigger new runs")
 }

@@ -3,6 +3,7 @@ package team
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,8 +162,12 @@ func TestMemberRunner_Stop(t *testing.T) {
 
 // --- Task 4: Lifecycle integration with real Service + mock TurnRunner ---
 
-// recordingTurnRunner records Run calls for test assertions.
+// recordingTurnRunner records Run calls for test assertions. runCalls is
+// written on the runner goroutine and read on the test goroutine, so all
+// access goes through mu. runResult/runErr/busy are only set at construction
+// (before Start), which is ordered by goroutine creation.
 type recordingTurnRunner struct {
+	mu        sync.Mutex
 	runCalls  []agent.TeamAgentCall
 	runResult agent.TurnRunResult
 	runErr    error
@@ -170,8 +175,26 @@ type recordingTurnRunner struct {
 }
 
 func (m *recordingTurnRunner) Run(ctx context.Context, call agent.TeamAgentCall) (agent.TurnRunResult, error) {
+	m.mu.Lock()
 	m.runCalls = append(m.runCalls, call)
+	m.mu.Unlock()
 	return m.runResult, m.runErr
+}
+
+// RunCallsCount returns the number of recorded Run calls.
+func (m *recordingTurnRunner) RunCallsCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.runCalls)
+}
+
+// RunCalls returns a snapshot of the recorded Run calls.
+func (m *recordingTurnRunner) RunCalls() []agent.TeamAgentCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]agent.TeamAgentCall, len(m.runCalls))
+	copy(out, m.runCalls)
+	return out
 }
 
 func (m *recordingTurnRunner) Cancel(sessionID string) {}
@@ -218,7 +241,7 @@ func TestMemberRunner_Start_IdleLoop_Wake_Run_Success(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		mr.mu.Lock()
-		calls := len(mockRunner.runCalls)
+		calls := mockRunner.RunCallsCount()
 		mr.mu.Unlock()
 		if calls >= 1 {
 			break
@@ -231,9 +254,10 @@ func TestMemberRunner_Start_IdleLoop_Wake_Run_Success(t *testing.T) {
 	mr.mu.Lock()
 	defer mr.mu.Unlock()
 	assert.Equal(t, MemberIdle, mr.State, "should return to idle after turn")
-	require.Len(t, mockRunner.runCalls, 1)
-	assert.Equal(t, mr.sessionID, mockRunner.runCalls[0].SessionID)
-	assert.NotEmpty(t, mockRunner.runCalls[0].PromptEnvelope, "prompt should not be empty (stub)")
+	calls := mockRunner.RunCalls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, mr.sessionID, calls[0].SessionID)
+	assert.NotEmpty(t, calls[0].PromptEnvelope, "prompt should not be empty (stub)")
 }
 
 func TestMemberRunner_handleWake_BusyPreservesWakeup(t *testing.T) {
@@ -265,7 +289,7 @@ func TestMemberRunner_handleWake_BusyPreservesWakeup(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	mr.mu.Lock()
 	defer mr.mu.Unlock()
-	assert.Equal(t, 0, len(mockRunner.runCalls), "no runs while busy")
+	assert.Equal(t, 0, mockRunner.RunCallsCount(), "no runs while busy")
 }
 
 func TestMemberRunner_handleWake_RunError(t *testing.T) {
@@ -294,7 +318,7 @@ func TestMemberRunner_handleWake_RunError(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		mr.mu.Lock()
-		calls := len(mockRunner.runCalls)
+		calls := mockRunner.RunCallsCount()
 		mr.mu.Unlock()
 		if calls >= 1 {
 			break
