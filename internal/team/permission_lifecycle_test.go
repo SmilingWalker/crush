@@ -115,7 +115,8 @@ func TestM5_UserDenies_PersistsDenied(t *testing.T) {
 		t.Fatal("request did not return")
 	}
 
-	got, _ := bridge.store.GetRequest(context.Background(), "lc-deny")
+	got, err := bridge.store.GetRequest(context.Background(), "lc-deny")
+	require.NoError(t, err)
 	assert.Equal(t, "denied", got.Status)
 	assert.Contains(t, capt.actions(), PermAuditPermissionDenied)
 }
@@ -126,7 +127,12 @@ func TestM5_AllowTaskScope_CreatesGrant(t *testing.T) {
 	waitRegistered(t, bridge, "lc-task")
 
 	require.NoError(t, bridge.ResolveRequest("lc-task", true, "task"))
-	<-res
+	select {
+	case allowed := <-res:
+		assert.True(t, allowed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not return")
+	}
 
 	bridge.grantStore.mu.RLock()
 	var taskGrant *Grant
@@ -203,4 +209,75 @@ func TestM5_LateAllowAfterTTLExpiry(t *testing.T) {
 	}
 	assert.Contains(t, capt.actions(), PermAuditLateResponse)
 	assert.Equal(t, 0, grantCount(bridge), "late decision must not create a grant")
+}
+
+// TestM5_AllowTaskScope_AutoApproveSameTask pins the production grant wiring:
+// a task-scoped allow auto-approves same-task re-requests (grant_auto audit
+// with TaskID/RunID) and re-prompts for a different task in the same session.
+func TestM5_AllowTaskScope_AutoApproveSameTask(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge("default", inner)
+	bridge.SetRequestTimeout(5 * time.Second)
+	capt := &auditCapture{}
+	bridge.SetAuditFunc(capt.record)
+
+	mkAc := func(taskID string) actor.ActorContext {
+		return actor.ActorContext{
+			SessionID: "s-auto", TeamID: "team-auto", MemberID: "m-auto", TaskID: taskID, RunID: "run-auto",
+			MemberName: "m", MemberRole: "programmer",
+		}
+	}
+	request := func(taskID, reqID string) <-chan bool {
+		res := make(chan bool, 1)
+		go func() {
+			allowed, _ := bridge.Request(mkAc(taskID).WithContext(t.Context()), permission.CreatePermissionRequest{
+				SessionID: "s-auto", ToolCallID: reqID, ToolName: "write",
+				Action: "write", Description: "test", Path: "/tmp/auto",
+			})
+			res <- allowed
+		}()
+		return res
+	}
+
+	// First request on task-1: prompt, user allows with task scope.
+	res1 := request("task-1", "auto-1")
+	waitRegistered(t, bridge, "auto-1")
+	require.NoError(t, bridge.ResolveRequest("auto-1", true, "task"))
+	select {
+	case allowed := <-res1:
+		require.True(t, allowed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not return")
+	}
+
+	// Same task re-request: auto-approved by the task grant (no prompt).
+	res2 := request("task-1", "auto-2")
+	select {
+	case allowed := <-res2:
+		assert.True(t, allowed, "same-task re-request must auto-approve")
+	case <-time.After(2 * time.Second):
+		t.Fatal("same-task re-request did not return")
+	}
+
+	// Different task, same session: must prompt again (still pending).
+	res3 := request("task-2", "auto-3")
+	waitRegistered(t, bridge, "auto-3")
+
+	// grant_auto fired for the same-task approval, with TaskID/RunID set.
+	capt.mu.Lock()
+	var grantAuto *PermAuditEvent
+	for i, e := range capt.events {
+		if e.Action == PermAuditGrantAuto {
+			grantAuto = &capt.events[i]
+		}
+	}
+	capt.mu.Unlock()
+	require.NotNil(t, grantAuto, "grant_auto must fire for same-task re-request")
+	assert.Equal(t, "task-1", grantAuto.TaskID)
+	assert.Equal(t, "run-auto", grantAuto.RunID)
+	assert.Equal(t, "task", grantAuto.Scope)
+
+	// Clean up the still-pending task-2 request.
+	require.NoError(t, bridge.ResolveRequest("auto-3", false, "call"))
+	<-res3
 }
