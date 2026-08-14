@@ -1,4 +1,3 @@
-
 package team
 
 import (
@@ -19,10 +18,10 @@ import (
 // configured TurnRunResult. The optional runErr is returned instead of the
 // result; runPanic makes Run panic (to exercise the recover path).
 type mockTurnRunner struct {
-	delay     time.Duration
-	result    agent.TurnRunResult
-	runErr    error
-	runPanic  bool
+	delay    time.Duration
+	result   agent.TurnRunResult
+	runErr   error
+	runPanic bool
 }
 
 func (m *mockTurnRunner) Run(ctx context.Context, _ agent.TeamAgentCall) (agent.TurnRunResult, error) {
@@ -48,10 +47,10 @@ func (m *mockTurnRunner) IsSessionBusy(_ string) bool { return false }
 // panicTypes triggers a BuildRunner panic for matching AgentTypes. This lets a
 // single group mix a panicking task with succeeding tasks (acceptance #3).
 type mockAgentFactory struct {
-	defaultDelay time.Duration
+	defaultDelay  time.Duration
 	defaultResult agent.TurnRunResult
 	defaultRunErr error
-	panicTypes    map[string]bool      // AgentTypes that panic at BuildRunner
+	panicTypes    map[string]bool         // AgentTypes that panic at BuildRunner
 	overrides     map[string]mockBehavior // AgentType -> per-type behavior
 }
 
@@ -140,7 +139,13 @@ func TestDelegateRunner_GroupStatusFlipsToDone(t *testing.T) {
 	group := runner.RunGroup(context.Background(), []DelegateTask{
 		{ID: "x", Prompt: "p", AgentID: "explore"},
 	})
-	assert.Equal(t, "running", group.Status)
+	// Read Status under group.mu: the trailing status-flip goroutine writes
+	// it under the same lock (delegate_runner.go RunGroup trailing goroutine),
+	// and this assertion runs before Wait() orders anything.
+	group.mu.Lock()
+	status := group.Status
+	group.mu.Unlock()
+	assert.Equal(t, "running", status)
 
 	group.Wait()
 	assert.Equal(t, "done", group.Status)
@@ -241,7 +246,7 @@ func TestDelegateRunner_BuildRunnerError(t *testing.T) {
 // string, and DurationMs is recorded.
 func TestDelegateRunner_RunError(t *testing.T) {
 	factory := &mockAgentFactory{
-		defaultDelay: 3 * time.Millisecond,
+		defaultDelay:  3 * time.Millisecond,
 		defaultRunErr: errors.New("model timed out"),
 	}
 	runner := NewDelegateRunner(factory)
@@ -389,28 +394,66 @@ func TestDelegateRunner_CancelGroup_CancelsAllDelegates(t *testing.T) {
 	assert.Equal(t, "canceled", group.Status)
 }
 
+// gateTurnRunner blocks Run until release is closed, then returns TurnCanceled
+// with ctx.Err() if the context is done, or the configured result otherwise.
+// Unlike mockTurnRunner (and team_runner_test.go's blockingTurnRunner) it does
+// NOT preempt on ctx.Done(), so a canceled group stays registered (its
+// trailing goroutine is still parked in wg.Wait) until the test releases it.
+// This makes cancel-idempotency assertions deterministic instead of
+// sleep-raced against the unregister.
+type gateTurnRunner struct {
+	release chan struct{}
+	result  agent.TurnRunResult
+}
+
+func (m *gateTurnRunner) Run(ctx context.Context, _ agent.TeamAgentCall) (agent.TurnRunResult, error) {
+	<-m.release
+	if err := ctx.Err(); err != nil {
+		return agent.TurnRunResult{Status: agent.TurnCanceled}, err
+	}
+	return m.result, nil
+}
+func (m *gateTurnRunner) Cancel(_ string)             {}
+func (m *gateTurnRunner) IsSessionBusy(_ string) bool { return false }
+
+// gateAgentFactory builds gateTurnRunners sharing one release channel.
+type gateAgentFactory struct {
+	release chan struct{}
+	result  agent.TurnRunResult
+}
+
+func (f *gateAgentFactory) BuildRunner(_ context.Context, _ agent.AgentSpec) (agent.TurnRunner, error) {
+	return &gateTurnRunner{release: f.release, result: f.result}, nil
+}
+
 // TestDelegateRunner_CancelGroup_Idempotent locks acceptance #3: calling
 // CancelGroup twice on the same group does not panic and the second call is a
 // no-op (returns nil). The group's Results remain TurnCanceled throughout.
+//
+// The delegate blocks on a release gate rather than a 30s timer so the group
+// is guaranteed to still be registered when the second CancelGroup fires: a
+// timer-based mock preempts on ctx.Done(), lets the trailing goroutine
+// unregister the group, and turns the second call into a racy "group not
+// found" error under -race.
 func TestDelegateRunner_CancelGroup_Idempotent(t *testing.T) {
-	factory := &mockAgentFactory{
-		defaultDelay:  30 * time.Second,
-		defaultResult: completedResult(),
-	}
+	release := make(chan struct{})
+	factory := &gateAgentFactory{release: release, result: completedResult()}
 	runner := NewDelegateRunner(factory)
 
 	group := runner.RunGroup(context.Background(), []DelegateTask{
 		{ID: "1", Prompt: "p", AgentID: "explore"},
 	})
-	time.Sleep(20 * time.Millisecond)
 
-	// First cancel: starts teardown.
+	// First cancel: starts teardown. The delegate stays blocked on release,
+	// so the runner still holds the group.
 	require.NotPanics(t, func() { require.NoError(t, runner.CancelGroup(group.ID)) })
 	// Second cancel must be a safe no-op (the group is already flipping to
 	// "canceled"; cancel() is documented repeatable, and the status re-check
 	// short-circuits).
 	require.NotPanics(t, func() { require.NoError(t, runner.CancelGroup(group.ID)) })
 
+	// Release the delegate: it observes the canceled context and settles.
+	close(release)
 	group.Wait()
 	require.Len(t, group.Results, 1)
 	assert.Equal(t, agent.TurnCanceled, group.Results[0].Status)
@@ -605,4 +648,3 @@ func TestDelegateDemoSmoke(t *testing.T) {
 	fmt.Println("[M2 DEMO SMOKE] AggregateResults markdown:")
 	fmt.Println(AggregateResults(group))
 }
-
