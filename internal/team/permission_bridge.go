@@ -243,6 +243,7 @@ type PermissionBridge struct {
 	store       *PermissionStore
 	grantStore  *GrantStore
 	queue       *PermissionQueue
+	fsm         *PermissionFSM
 	auditFn     PermAuditFunc
 	// pendingRequests tracks requests awaiting UI decision
 	pendingRequests map[string]chan bool  // requestID → decision channel
@@ -276,15 +277,18 @@ func NewPermissionBridge(workspaceID string, inner permission.Service) *Permissi
 		requestTimeout:  defaultRequestTimeout,
 	}
 	fsm := NewPermissionFSM(bridge.store, bridge.grantStore, bridge.auditFn)
+	bridge.fsm = fsm
 	bridge.queue = NewPermissionQueue(fsm)
 	return bridge
 }
 
-// SetAuditFunc sets the audit callback for permission events.
+// SetAuditFunc sets the audit callback for permission events. The callback is
+// also propagated to the FSM so lifecycle transitions are audited.
 func (b *PermissionBridge) SetAuditFunc(fn PermAuditFunc) {
 	b.queueMu.Lock()
-	defer b.queueMu.Unlock()
 	b.auditFn = fn
+	b.queueMu.Unlock()
+	b.fsm.SetAuditFunc(fn)
 }
 
 // SetActiveSessionTracker injects the shared ActiveSessionTracker from app.go.
@@ -400,14 +404,26 @@ func (b *PermissionBridge) requestWithUI(ctx context.Context, opts permission.Cr
 
 	now := time.Now()
 	teamReq := &PermissionRequest{
-		ID:         reqID,
-		SessionID:  opts.SessionID,
-		ToolCallID: reqID,
-		ToolName:   opts.ToolName,
-		Action:     opts.Action,
-		Status:     "pending",
-		CreatedAt:  now,
-		ExpiresAt:  now.Add(requestTimeout),
+		ID:          reqID,
+		WorkspaceID: b.workspaceID,
+		TeamID:      ac.TeamID,
+		MemberID:    ac.MemberID,
+		TaskID:      ac.TaskID,
+		RunID:       ac.RunID,
+		SessionID:   opts.SessionID,
+		ToolCallID:  reqID,
+		ToolName:    opts.ToolName,
+		Action:      opts.Action,
+		ResourceRef: opts.Path,
+		Status:      "pending",
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(requestTimeout),
+	}
+
+	// B2: persist so the FSM lifecycle (resolve/expire/cancel) has a row to
+	// transition. In-memory store — failure is log-only.
+	if err := b.store.CreateRequest(ctx, teamReq); err != nil {
+		slog.Debug("perm_bridge: persist permission request failed", "tool_call_id", reqID, "error", err)
 	}
 
 	b.queueMu.Lock()

@@ -1096,3 +1096,64 @@ func TestPermissionBridge_ConcurrentSettersAndRequest(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+func TestBridge_RequestPersistsToStore(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge("default", inner)
+	bridge.SetRequestTimeout(150 * time.Millisecond)
+
+	ac := actor.ActorContext{
+		SessionID: "s-persist", TeamID: "team-p", MemberID: "m-p", TaskID: "task-p", RunID: "run-p",
+		MemberName: "m", MemberRole: "programmer",
+	}
+	done := make(chan bool, 1)
+	go func() {
+		allowed, _ := bridge.Request(ac.WithContext(t.Context()), permission.CreatePermissionRequest{
+			SessionID: "s-persist", ToolCallID: "tc-persist", ToolName: "write",
+			Action: "write", Description: "test", Path: "/tmp/persist",
+		})
+		done <- allowed
+	}()
+
+	require.Eventually(t, func() bool {
+		_, err := bridge.store.GetRequest(context.Background(), "tc-persist")
+		return err == nil
+	}, 2*time.Second, 10*time.Millisecond, "request must be persisted while pending")
+
+	got, err := bridge.store.GetRequest(context.Background(), "tc-persist")
+	require.NoError(t, err)
+	assert.Equal(t, "pending", got.Status)
+	assert.Equal(t, "default", got.WorkspaceID)
+	assert.Equal(t, "team-p", got.TeamID)
+	assert.Equal(t, "m-p", got.MemberID)
+	assert.Equal(t, "task-p", got.TaskID)
+	assert.Equal(t, "run-p", got.RunID)
+	assert.Equal(t, "/tmp/persist", got.ResourceRef)
+
+	<-done // 150ms 超时自然结束（deny）
+}
+
+func TestBridge_SetAuditFunc_PropagatesToFSM(t *testing.T) {
+	inner := permission.NewPermissionService(t.TempDir(), false, nil)
+	bridge := NewPermissionBridge("default", inner)
+
+	var mu sync.Mutex
+	var events []PermAuditEvent
+	bridge.SetAuditFunc(func(ctx context.Context, e PermAuditEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, e)
+	})
+
+	ctx := context.Background()
+	require.NoError(t, bridge.store.CreateRequest(ctx, &PermissionRequest{
+		ID: "b4-1", TeamID: "t1", MemberID: "m1", SessionID: "s1",
+		ToolName: "bash", Action: "execute", Status: "pending", CreatedAt: time.Now(),
+	}))
+	require.NoError(t, bridge.fsm.Expire(ctx, "b4-1"))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, events, 1)
+	assert.Equal(t, PermAuditPermissionExpired, events[0].Action)
+}
